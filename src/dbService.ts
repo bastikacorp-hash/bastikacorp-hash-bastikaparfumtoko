@@ -566,15 +566,28 @@ export async function addManualCashMutation(type: "in" | "out", amount: number, 
 // ==========================================
 // CLIENTS MANAGEMENT (WHITELIST ACCESS)
 // ==========================================
-export function subscribeToClients(callback: (users: UserProfile[]) => void) {
-  return onSnapshot(collection(db, "users"), (snapshot) => {
-    const list: UserProfile[] = [];
-    snapshot.forEach((docSnap) => {
-      list.push(docSnap.data() as UserProfile);
-    });
-    list.sort((a, b) => a.email.localeCompare(b.email));
-    callback(list);
-  });
+export function subscribeToClients(
+  callback: (users: UserProfile[]) => void,
+  errorCallback?: (error: any) => void
+) {
+  return onSnapshot(
+    collection(db, "users"),
+    (snapshot) => {
+      const list: UserProfile[] = [];
+      snapshot.forEach((docSnap) => {
+        list.push(docSnap.data() as UserProfile);
+      });
+      list.sort((a, b) => a.email.localeCompare(b.email));
+      callback(list);
+    },
+    (error) => {
+      if (errorCallback) {
+        errorCallback(error);
+      } else {
+        console.error("Error in subscribeToClients:", error);
+      }
+    }
+  );
 }
 
 export async function addClientUser(email: string, role: "admin" | "client" = "client") {

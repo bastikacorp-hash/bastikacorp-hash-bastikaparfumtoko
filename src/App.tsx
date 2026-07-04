@@ -5,6 +5,8 @@ import {
   signInWithPopup, 
   signOut, 
   onAuthStateChanged,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
   User 
 } from "./firebase";
 import {
@@ -75,6 +77,11 @@ export default function App() {
   const [userRole, setUserRole] = useState<UserRole | null>(null);
   const [userWhitelist, setUserWhitelist] = useState<UserProfile[]>([]);
   const [authLoading, setAuthLoading] = useState(true);
+
+  // Real Email/Password Auth State
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [isRegisterMode, setIsRegisterMode] = useState(false);
 
   // Core Data State
   const [cashBalance, setCashBalance] = useState(0);
@@ -169,11 +176,15 @@ export default function App() {
 
   // 2. Client Whitelist sync & role evaluation
   useEffect(() => {
+    if (!currentUser) {
+      setUserRole(null);
+      return;
+    }
+
     const unsubscribe = subscribeToClients((users) => {
       setUserWhitelist(users);
       
-      // Determine role of currently logged in user
-      const loggedEmail = currentUser ? currentUser.email?.trim().toLowerCase() : customEmail.trim().toLowerCase();
+      const loggedEmail = currentUser.email?.trim().toLowerCase();
       if (loggedEmail) {
         if (loggedEmail === "bastikacorp@gmail.com") {
           setUserRole("admin");
@@ -188,9 +199,12 @@ export default function App() {
       } else {
         setUserRole(null);
       }
+    }, (error) => {
+      console.error("Gagal memuat whitelist:", error);
+      setUserRole(null);
     });
     return () => unsubscribe();
-  }, [currentUser, customEmail]);
+  }, [currentUser]);
 
   // 3. Real-time Subscriptions to DB
   useEffect(() => {
@@ -248,14 +262,39 @@ export default function App() {
   };
 
   // Login handler with bypass for sandbox environment
-  const handleBypassLogin = (email: string) => {
-    setCustomEmail(email);
-    showToast(`Berhasil masuk sebagai ${email}`, "success");
-    // Default appropriate landing tabs
-    if (email === "bastikacorp@gmail.com") {
-      setActiveTab("dashboard");
-    } else {
-      setActiveTab("sales"); // Client defaults to Sales input screen
+  const handleBypassLogin = async (email: string) => {
+    setAuthLoading(true);
+    try {
+      const cleanEmail = email.trim().toLowerCase();
+      // Use a standard secure default password for automatic simulated registration
+      const defaultPassword = "bastikaPassword123";
+      
+      let userCredential;
+      try {
+        userCredential = await signInWithEmailAndPassword(auth, cleanEmail, defaultPassword);
+      } catch (err: any) {
+        if (err.code === "auth/user-not-found" || err.code === "auth/invalid-credential" || err.code === "auth/invalid-email" || err.code === "auth/invalid-login-credentials") {
+          // Auto create account if it doesn't exist
+          userCredential = await createUserWithEmailAndPassword(auth, cleanEmail, defaultPassword);
+        } else {
+          throw err;
+        }
+      }
+      
+      setCurrentUser(userCredential.user);
+      setCustomEmail(cleanEmail);
+      showToast(`Berhasil masuk sebagai ${cleanEmail}`, "success");
+      
+      if (cleanEmail === "bastikacorp@gmail.com") {
+        setActiveTab("dashboard");
+      } else {
+        setActiveTab("sales");
+      }
+    } catch (err: any) {
+      console.error("Bypass login error:", err);
+      showToast("Gagal masuk lewat simulasi email", "error");
+    } finally {
+      setAuthLoading(false);
     }
   };
 
@@ -265,7 +304,45 @@ export default function App() {
       showToast(`Selamat datang, ${result.user.displayName || result.user.email}!`, "success");
     } catch (err: any) {
       console.error(err);
-      showToast(err.message || "Gagal masuk lewat Google", "error");
+      if (err.code === "auth/unauthorized-domain") {
+        showToast("Domain belum diotorisasi di Firebase. Gunakan Login Email atau hubungi Admin.", "error");
+      } else {
+        showToast(err.message || "Gagal masuk lewat Google", "error");
+      }
+    }
+  };
+
+  const handleEmailAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!loginEmail || !loginPassword) {
+      showToast("Harap isi email dan kata sandi!", "error");
+      return;
+    }
+    if (loginPassword.length < 6) {
+      showToast("Kata sandi minimal 6 karakter!", "error");
+      return;
+    }
+    setAuthLoading(true);
+    try {
+      const cleanEmail = loginEmail.trim().toLowerCase();
+      if (isRegisterMode) {
+        const cred = await createUserWithEmailAndPassword(auth, cleanEmail, loginPassword);
+        showToast("Registrasi berhasil!", "success");
+        await seedInitialDataIfEmpty();
+      } else {
+        const cred = await signInWithEmailAndPassword(auth, cleanEmail, loginPassword);
+        showToast("Berhasil masuk!", "success");
+      }
+    } catch (err: any) {
+      console.error(err);
+      let errMsg = "Gagal autentikasi email";
+      if (err.code === "auth/user-not-found") errMsg = "Email tidak terdaftar!";
+      else if (err.code === "auth/wrong-password") errMsg = "Kata sandi salah!";
+      else if (err.code === "auth/email-already-in-use") errMsg = "Email sudah terdaftar!";
+      else if (err.code === "auth/invalid-credential" || err.code === "auth/invalid-login-credentials") errMsg = "Email atau sandi salah!";
+      showToast(err.message || errMsg, "error");
+    } finally {
+      setAuthLoading(false);
     }
   };
 
@@ -540,59 +617,111 @@ export default function App() {
           {/* Accent Glow */}
           <div className="absolute top-0 left-1/4 w-1/2 h-1 bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-600 rounded-full"></div>
           
-          <div className="flex flex-col items-center mb-8">
-            <div className="h-16 w-16 bg-gradient-to-tr from-emerald-600 to-teal-500 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-950/40 mb-4 transform hover:scale-105 transition-transform">
-              <ShoppingBag className="h-8 w-8 text-white" />
+          <div className="flex flex-col items-center mb-6">
+            <div className="h-14 w-14 bg-gradient-to-tr from-emerald-600 to-teal-500 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-950/40 mb-3 transform hover:scale-105 transition-transform">
+              <ShoppingBag className="h-7 w-7 text-white" />
             </div>
-            <h1 className="text-3xl font-bold font-display text-white tracking-tight text-center">BASTIKA PARFUM</h1>
-            <p className="text-emerald-400 font-semibold tracking-widest text-xs uppercase mt-1">Professional Management & POS</p>
-            <p className="text-slate-400 text-xs text-center mt-3 leading-relaxed max-w-xs">
+            <h1 className="text-2xl font-bold font-display text-white tracking-tight text-center">BASTIKA PARFUM</h1>
+            <p className="text-emerald-400 font-semibold tracking-widest text-[10px] uppercase mt-0.5">Professional Management & POS</p>
+            <p className="text-slate-400 text-xs text-center mt-2 leading-relaxed max-w-xs">
               Sistem POS & Akuntansi Cloud Terintegrasi. Mengelola Rak, Inventori, Mutasi Kas, dan Penggajian Toko Parfum.
             </p>
           </div>
 
-          <div className="space-y-6">
-            {/* Real Authentication */}
+          <div className="space-y-4">
+            {/* Real Authentication - Google */}
             <button 
               id="google-signin-btn"
               onClick={handleGoogleSignIn}
-              className="w-full flex items-center justify-center gap-3 bg-white hover:bg-slate-50 text-slate-800 font-semibold py-3 px-4 rounded-xl transition-all duration-150 transform hover:-translate-y-0.5 active:translate-y-0 shadow-lg cursor-pointer"
+              className="w-full flex items-center justify-center gap-3 bg-white hover:bg-slate-50 text-slate-800 font-semibold py-2.5 px-4 rounded-xl transition-all duration-150 transform hover:-translate-y-0.5 active:translate-y-0 shadow-md cursor-pointer text-xs"
             >
-              <svg className="h-5 w-5" viewBox="0 0 24 24">
+              <svg className="h-4 w-4" viewBox="0 0 24 24">
                 <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v3.9h6.6c-.28 1.5-.1.1.2 1.1-1.12 1.34-3 2.2-6.8 2.2-4.14 0-7.5-3.36-7.5-7.5s3.36-7.5 7.5-7.5c1.86 0 3.55.67 4.88 1.95l2.85-2.85C17.02 1.44 14.65.6 12 .6 5.7.6.6 5.7.6 12s5.1 11.4 11.4 11.4c6.3 0 11.74-5.1 11.74-11.43z"/>
               </svg>
               Masuk dengan Akun Google
             </button>
 
-            <div className="relative flex py-2 items-center">
-              <div className="flex-grow border-t border-slate-700/60"></div>
-              <span className="flex-shrink mx-4 text-slate-500 text-xs uppercase tracking-wider font-semibold">Bypass Simulasi Peran</span>
-              <div className="flex-grow border-t border-slate-700/60"></div>
+            <div className="relative flex py-1 items-center">
+              <div className="flex-grow border-t border-slate-700/40"></div>
+              <span className="flex-shrink mx-3 text-slate-500 text-[10px] uppercase tracking-wider font-semibold">Atau Masuk dengan Email</span>
+              <div className="flex-grow border-t border-slate-700/40"></div>
+            </div>
+
+            {/* Real Authentication - Email & Password */}
+            <form onSubmit={handleEmailAuthSubmit} className="space-y-3 bg-slate-900/40 border border-slate-700/30 rounded-xl p-4">
+              <div className="space-y-2">
+                <div>
+                  <label className="block text-[10px] font-semibold text-slate-400 mb-1">Email Karyawan</label>
+                  <input
+                    id="email-login-input"
+                    type="email"
+                    placeholder="nama@email.com"
+                    value={loginEmail}
+                    onChange={(e) => setLoginEmail(e.target.value)}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-slate-400 mb-1">Kata Sandi (Min. 6 Karakter)</label>
+                  <input
+                    id="password-login-input"
+                    type="password"
+                    placeholder="••••••••"
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-1 items-center justify-between">
+                <button
+                  type="submit"
+                  className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-1.5 px-3 rounded-lg text-xs transition-colors cursor-pointer"
+                >
+                  {isRegisterMode ? "Daftar Akun" : "Masuk"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsRegisterMode(!isRegisterMode)}
+                  className="text-slate-400 hover:text-emerald-400 font-semibold text-[10px] py-1 px-2"
+                >
+                  {isRegisterMode ? "Sudah Punya Akun?" : "Buat Akun Baru"}
+                </button>
+              </div>
+            </form>
+
+            <div className="relative flex py-1 items-center">
+              <div className="flex-grow border-t border-slate-700/40"></div>
+              <span className="flex-shrink mx-3 text-slate-500 text-[10px] uppercase tracking-wider font-semibold">Bypass Simulasi Peran</span>
+              <div className="flex-grow border-t border-slate-700/40"></div>
             </div>
 
             {/* Direct Bypass login options for sandbox environment (highly recommended for review and testing) */}
             <div className="bg-slate-900/60 border border-slate-700/30 rounded-xl p-4 space-y-3">
-              <p className="text-slate-400 text-[11px] leading-snug">
-                *Gunakan tombol di bawah ini untuk mensimulasikan login tanpa popup Google di dalam lingkungan AI Studio:
+              <p className="text-slate-400 text-[10px] leading-snug">
+                *Klik tombol di bawah ini untuk masuk secara instan menggunakan simulasi akun real-auth di AI Studio maupun Netlify:
               </p>
               
               <div className="grid grid-cols-2 gap-2">
                 <button
                   id="bypass-admin-btn"
                   onClick={() => handleBypassLogin("bastikacorp@gmail.com")}
-                  className="bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 text-emerald-300 font-medium py-2.5 px-3 rounded-lg text-xs transition-colors flex flex-col items-center justify-center gap-1"
+                  className="bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 text-emerald-300 font-medium py-2 px-3 rounded-lg text-[10px] transition-colors flex flex-col items-center justify-center gap-0.5"
                 >
                   <span className="font-bold">ADMIN UTAMA</span>
-                  <span className="text-[10px] text-slate-400">bastikacorp@gmail.com</span>
+                  <span className="text-[9px] text-slate-400">bastikacorp@gmail.com</span>
                 </button>
 
                 <button
                   id="bypass-client-btn"
                   onClick={() => handleBypassLogin("budi@gmail.com")}
-                  className="bg-slate-700 hover:bg-slate-600 text-slate-200 border border-slate-600/50 font-medium py-2.5 px-3 rounded-lg text-xs transition-colors flex flex-col items-center justify-center gap-1"
+                  className="bg-slate-700 hover:bg-slate-600 text-slate-200 border border-slate-600/50 font-medium py-2 px-3 rounded-lg text-[10px] transition-colors flex flex-col items-center justify-center gap-0.5"
                 >
                   <span className="font-bold">CLIENT (KASIR)</span>
-                  <span className="text-[10px] text-slate-400">budi@gmail.com</span>
+                  <span className="text-[9px] text-slate-400">budi@gmail.com</span>
                 </button>
               </div>
 
@@ -603,7 +732,7 @@ export default function App() {
                   placeholder="Atau masukkan email lain..."
                   value={customEmail}
                   onChange={(e) => setCustomEmail(e.target.value)}
-                  className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                 />
                 <button
                   id="bypass-custom-btn"

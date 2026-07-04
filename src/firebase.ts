@@ -70,6 +70,8 @@ export {
   signInWithPopup,
   signOut,
   onAuthStateChanged,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
   collection,
   doc,
   getDoc,

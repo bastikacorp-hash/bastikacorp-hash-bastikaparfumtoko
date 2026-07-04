@@ -37,7 +37,9 @@ import {
   subscribeToBottleSizes,
   addBottleSize,
   deleteBottleSize,
-  updateInitialCapital
+  updateInitialCapital,
+  subscribeToInvoiceSettings,
+  updateInvoiceSettings
 } from "./dbService";
 import { 
   Shelf as ShelfType, 
@@ -48,7 +50,8 @@ import {
   CashMutation, 
   UserProfile, 
   UserRole,
-  BottleSize
+  BottleSize,
+  InvoiceSettings
 } from "./types";
 import { 
   ShoppingBag, 
@@ -80,7 +83,8 @@ import {
   Coins,
   Save,
   FileSpreadsheet,
-  X
+  X,
+  Printer
 } from "lucide-react";
 
 export default function App() {
@@ -109,6 +113,23 @@ export default function App() {
   const [salaries, setSalaries] = useState<Salary[]>([]);
   const [cashLedger, setCashLedger] = useState<CashMutation[]>([]);
   const [bottleSizes, setBottleSizes] = useState<BottleSize[]>([]);
+
+  // Invoice settings & Print state
+  const [invoiceSettings, setInvoiceSettings] = useState<InvoiceSettings>({
+    storeName: "BASTIKA PARFUM",
+    slogan: "THE PREMIUM SCENTS",
+    address: "Komp. Ruko Bastika, Jl. Raya Wangi No. 5, Jakarta",
+    phone: "0812-3456-7890",
+    headerMessage: "BUKTI PENJUALAN RESMI",
+    footerMessage1: "Terima Kasih Atas Kunjungan Anda",
+    footerMessage2: "Barang yang sudah dibeli tidak dapat ditukar/dikembalikan.",
+    paperWidth: "58mm",
+    logoUrl: "/icon.jpg",
+    showLogo: true
+  });
+  const [tempSettings, setTempSettings] = useState<InvoiceSettings | null>(null);
+  const [printTx, setPrintTx] = useState<Transaction | null>(null);
+  const [isEditingInvoice, setIsEditingInvoice] = useState(false);
 
   // State for adding new custom bottle size
   const [newBottleSize, setNewBottleSize] = useState("");
@@ -314,6 +335,7 @@ export default function App() {
     const unsubStocks = subscribeToStocks(setStocks);
     const unsubTx = subscribeToTransactions(setTransactions);
     const unsubBottleSizes = subscribeToBottleSizes(setBottleSizes);
+    const unsubInvoice = subscribeToInvoiceSettings(setInvoiceSettings);
 
     let unsubSalaries = () => {};
     let unsubLedger = () => {};
@@ -332,6 +354,7 @@ export default function App() {
       unsubBottleSizes();
       unsubSalaries();
       unsubLedger();
+      unsubInvoice();
     };
   }, [userRole]);
 
@@ -341,6 +364,13 @@ export default function App() {
       seedInitialDataIfEmpty();
     }
   }, [customEmail]);
+
+  // Sync local tempSettings with Firestore config
+  useEffect(() => {
+    if (invoiceSettings) {
+      setTempSettings(invoiceSettings);
+    }
+  }, [invoiceSettings]);
 
   // Sync initial capital input state with the actual ledger's mut_init mutation
   useEffect(() => {
@@ -510,6 +540,23 @@ export default function App() {
     }
   };
 
+  const handleSettingChange = (field: keyof InvoiceSettings, value: any) => {
+    if (tempSettings) {
+      setTempSettings({ ...tempSettings, [field]: value });
+    }
+  };
+
+  const handleSaveInvoiceSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tempSettings) return;
+    try {
+      await updateInvoiceSettings(tempSettings);
+      showToast("Format kop invoice berhasil disimpan secara realtime ke cloud!", "success");
+    } catch (err: any) {
+      showToast(err.message || "Gagal menyimpan format invoice", "error");
+    }
+  };
+
   const handleUpdatePrice = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingPrice) return;
@@ -550,7 +597,7 @@ export default function App() {
     }
 
     try {
-      await addTransaction({
+      const txId = await addTransaction({
         type: "sale",
         category: "bibit",
         date: new Date().toISOString(),
@@ -564,8 +611,26 @@ export default function App() {
         description: saleDescription || `Penjualan bibit ${saleScent} (${saleVolume}ml) + Botol ${saleBottleSize}${saleDiscountType !== 'none' ? ` (Diskon: ${saleDiscountType === 'free_bottle' ? 'Gratis Botol' : formatRupiah(computedDiscount)})` : ''}`,
         operatorEmail: opEmail
       });
+
+      const newTx: Transaction = {
+        id: txId,
+        type: "sale",
+        category: "bibit",
+        date: new Date().toISOString(),
+        scentName: saleScent,
+        volumeMl: saleVolume,
+        bottleSize: saleBottleSize,
+        bottleCount: saleBottleCount,
+        totalPrice: saleTotalPrice,
+        discountType: saleDiscountType,
+        discountNominal: computedDiscount,
+        description: saleDescription || `Penjualan bibit ${saleScent} (${saleVolume}ml) + Botol ${saleBottleSize}${saleDiscountType !== 'none' ? ` (Diskon: ${saleDiscountType === 'free_bottle' ? 'Gratis Botol' : formatRupiah(computedDiscount)})` : ''}`,
+        operatorEmail: opEmail
+      };
       
       showToast("Transaksi Penjualan berhasil disimpan! Stok berkurang otomatis.", "success");
+      setPrintTx(newTx);
+      
       // Reset form
       setSaleScent("");
       setSaleVolume(0);
@@ -1216,6 +1281,17 @@ export default function App() {
               >
                 <Users className="h-4 w-4" />
                 Hak Akses Client
+              </button>
+
+              <button
+                id="nav-invoice-settings-btn"
+                onClick={() => setActiveTab("invoice_settings")}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition-colors cursor-pointer ${
+                  activeTab === "invoice_settings" ? "bg-emerald-600 text-white font-bold" : "text-slate-400 hover:bg-slate-800 hover:text-white"
+                }`}
+              >
+                <Settings className="h-4 w-4" />
+                Format Kop Invoice
               </button>
             </>
           )}
@@ -2852,6 +2928,7 @@ export default function App() {
                       <th className="py-3 px-4">Detail Mutasi Barang</th>
                       <th className="py-3 px-4">Operator Kasir</th>
                       <th className="py-3 px-4 text-right">Total Transaksi</th>
+                      <th className="py-3 px-4 text-center">Aksi</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -2882,11 +2959,23 @@ export default function App() {
                         }`}>
                           {t.type === "sale" ? "+" : "-"}{formatRupiah(t.totalPrice)}
                         </td>
+                        <td className="py-3 px-4 text-center">
+                          {t.type === "sale" && (
+                            <button
+                              onClick={() => setPrintTx(t)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 hover:text-emerald-800 font-extrabold rounded-lg text-[10px] transition-all border border-emerald-100 shadow-sm cursor-pointer"
+                              title="Print Invoice Penjualan"
+                            >
+                              <Printer className="h-3 w-3" />
+                              Invoice
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     ))}
                     {transactions.length === 0 && (
                       <tr>
-                        <td colSpan={5} className="py-8 text-center text-slate-400 italic">
+                        <td colSpan={6} className="py-8 text-center text-slate-400 italic">
                           Belum ada histori transaksi terekam.
                         </td>
                       </tr>
@@ -2896,6 +2985,561 @@ export default function App() {
               </div>
             </div>
           )}
+
+          {/* ==========================================
+              9. CONFIG TEMPLATE INVOICE (Admin Only)
+              ========================================== */}
+          {activeTab === "invoice_settings" && userRole === "admin" && tempSettings && (
+            <div className="space-y-6">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+                <div>
+                  <h3 className="font-bold text-base text-slate-900 font-display">Desain Format & Kop Invoice</h3>
+                  <p className="text-xs text-slate-500">Edit data kop logo toko BASTIKA PARFUM untuk print out thermal printer.</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <span className="text-[11px] font-semibold text-slate-600">Sinkronisasi Cloud Real-time</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+                {/* Form Input (Left Column) */}
+                <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm lg:col-span-7 space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                    <Edit3 className="h-4.5 w-4.5 text-emerald-600" />
+                    <h4 className="font-bold text-xs text-slate-700 uppercase tracking-wider">Formulir Isian Kop & Nota</h4>
+                  </div>
+
+                  <form onSubmit={handleSaveInvoiceSettings} className="space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Nama Toko / Brand</label>
+                        <input
+                          id="inv-store-name"
+                          type="text"
+                          value={tempSettings.storeName}
+                          onChange={(e) => handleSettingChange("storeName", e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
+                          placeholder="BASTIKA PARFUM"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Slogan / Tagline</label>
+                        <input
+                          id="inv-slogan"
+                          type="text"
+                          value={tempSettings.slogan}
+                          onChange={(e) => handleSettingChange("slogan", e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
+                          placeholder="THE PREMIUM SCENTS"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Alamat Lengkap Toko</label>
+                      <textarea
+                        id="inv-address"
+                        rows={2}
+                        value={tempSettings.address}
+                        onChange={(e) => handleSettingChange("address", e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
+                        placeholder="Jl. Merdeka No. 123, Bandung"
+                        required
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">No. Kontak / WhatsApp</label>
+                        <input
+                          id="inv-phone"
+                          type="text"
+                          value={tempSettings.phone}
+                          onChange={(e) => handleSettingChange("phone", e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
+                          placeholder="0812-3456-7890"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Pesan Header Nota</label>
+                        <input
+                          id="inv-header"
+                          type="text"
+                          value={tempSettings.headerMessage}
+                          onChange={(e) => handleSettingChange("headerMessage", e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
+                          placeholder="BUKTI PENJUALAN RESMI"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Pesan Penutup Baris 1 (Greeting)</label>
+                      <input
+                        id="inv-footer1"
+                        type="text"
+                        value={tempSettings.footerMessage1}
+                        onChange={(e) => handleSettingChange("footerMessage1", e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
+                        placeholder="Terima Kasih Atas Kunjungan Anda"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Pesan Penutup Baris 2 (Ketentuan)</label>
+                      <input
+                        id="inv-footer2"
+                        type="text"
+                        value={tempSettings.footerMessage2}
+                        onChange={(e) => handleSettingChange("footerMessage2", e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
+                        placeholder="Barang yang sudah dibeli tidak dapat ditukar."
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Lebar Kertas Cetak</label>
+                        <select
+                          id="inv-width"
+                          value={tempSettings.paperWidth}
+                          onChange={(e) => handleSettingChange("paperWidth", e.target.value as "58mm" | "80mm")}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
+                        >
+                          <option value="58mm">Thermal 58mm (Standard Mini)</option>
+                          <option value="80mm">Thermal 80mm (Standard Desktop)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Path Gambar Logo (Default: /icon.jpg)</label>
+                        <input
+                          id="inv-logo-url"
+                          type="text"
+                          value={tempSettings.logoUrl}
+                          onChange={(e) => handleSettingChange("logoUrl", e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
+                          placeholder="/icon.jpg"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3 pt-2">
+                      <input
+                        id="inv-show-logo"
+                        type="checkbox"
+                        checked={tempSettings.showLogo}
+                        onChange={(e) => handleSettingChange("showLogo", e.target.checked)}
+                        className="h-4 w-4 text-emerald-600 border-slate-300 rounded focus:ring-emerald-500 cursor-pointer"
+                      />
+                      <label htmlFor="inv-show-logo" className="text-xs font-bold text-slate-600 select-none cursor-pointer">
+                        Tampilkan Kop Gambar Logo pada Nota Invoice
+                      </label>
+                    </div>
+
+                    <div className="pt-4 border-t border-slate-100 flex justify-end gap-3">
+                      <button
+                        id="save-invoice-btn"
+                        type="submit"
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs py-2.5 px-6 rounded-xl shadow-md flex items-center gap-2 transition-all cursor-pointer"
+                      >
+                        <Save className="h-4 w-4" />
+                        Simpan Format Kop
+                      </button>
+                    </div>
+                  </form>
+                </div>
+
+                {/* Real-time Preview (Right Column) */}
+                <div className="lg:col-span-5 flex flex-col items-center animate-in fade-in slide-in-from-right-2 duration-300">
+                  <div className="w-full max-w-sm mb-3 text-left">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <Printer className="h-3 w-3" />
+                      Live Preview Kertas Thermal ({tempSettings.paperWidth})
+                    </span>
+                  </div>
+
+                  {/* Simulated Thermal Ticket Roll */}
+                  <div className="bg-slate-100 p-6 rounded-3xl border border-slate-300/60 shadow-inner w-full flex justify-center bg-radial from-white via-slate-100 to-slate-200">
+                    <div 
+                      className={`bg-white text-black p-4 shadow-2xl font-mono text-[10px] leading-relaxed relative ${
+                        tempSettings.paperWidth === "58mm" ? "w-[240px]" : "w-[320px]"
+                      }`}
+                      style={{ borderBottom: "5px dashed #ccc" }}
+                    >
+                      {/* Ticket top ripple effect */}
+                      <div className="absolute top-0 left-0 right-0 h-1 bg-repeat-x bg-[linear-gradient(45deg,transparent_33.3%,#ccc_33.3%,#ccc_66.6%,transparent_66.6%)] bg-[length:6px_4px]"></div>
+
+                      <div className="text-center space-y-1.5 pt-4">
+                        {tempSettings.showLogo && tempSettings.logoUrl && (
+                          <div className="flex justify-center mb-1">
+                            <img 
+                              src={tempSettings.logoUrl} 
+                              alt="Logo" 
+                              className="h-10 w-10 object-contain rounded-full border border-slate-200" 
+                              referrerPolicy="no-referrer"
+                              onError={(e) => {
+                                (e.currentTarget as HTMLImageElement).src = "/icon.jpg";
+                              }}
+                            />
+                          </div>
+                        )}
+                        <h5 className="font-extrabold text-xs uppercase tracking-wide">{tempSettings.storeName}</h5>
+                        <p className="text-[9px] text-slate-600 font-semibold italic">{tempSettings.slogan}</p>
+                        <p className="text-[8px] leading-tight text-slate-600 px-2 whitespace-pre-line">{tempSettings.address}</p>
+                        <p className="text-[8px] text-slate-600 font-bold">Telp/WA: {tempSettings.phone}</p>
+                        
+                        <div className="py-1">
+                          <p className="text-[8px] font-extrabold tracking-widest bg-slate-100 py-0.5 rounded text-slate-700 uppercase border border-slate-200">
+                            {tempSettings.headerMessage || "BUKTI PENJUALAN"}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="text-[8px] text-slate-700 space-y-0.5 pt-3 border-t border-dashed border-slate-300">
+                        <div className="flex justify-between">
+                          <span>TANGGAL : {new Date().toLocaleString("id-ID")}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>INVOICE : TX-MOCK-2026</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>KASIR   : {currentUser?.email || "admin@bastika.com"}</span>
+                        </div>
+                      </div>
+
+                      <div className="border-t border-dashed border-slate-300 my-2 pt-1.5">
+                        <div className="text-[8px] font-bold text-slate-800 pb-1 flex justify-between">
+                          <span>AROMA & KEMASAN</span>
+                          <span>JUMLAH</span>
+                        </div>
+                        
+                        {/* Mock Scent Row */}
+                        <div className="text-[8px] text-slate-800 space-y-0.5">
+                          <div className="flex justify-between">
+                            <span className="font-bold">Bibit Baccarat (30ml)</span>
+                            <span>Rp 105.000</span>
+                          </div>
+                          <div className="flex justify-between text-[7px] text-slate-500 pl-2">
+                            <span>30 ml x Rp 3.500 /ml</span>
+                          </div>
+                        </div>
+
+                        {/* Mock Bottle Row */}
+                        <div className="text-[8px] text-slate-800 pt-1 flex justify-between">
+                          <span>Botol 30ml (1 pcs)</span>
+                          <span>Rp 15.000</span>
+                        </div>
+                      </div>
+
+                      <div className="border-t border-dashed border-slate-300 my-2 pt-2 space-y-1">
+                        <div className="flex justify-between text-[8px]">
+                          <span>SUBTOTAL</span>
+                          <span>Rp 120.000</span>
+                        </div>
+                        <div className="flex justify-between text-[8px] font-bold text-emerald-700">
+                          <span>DISKON PROMO</span>
+                          <span>-Rp 15.000</span>
+                        </div>
+                        <div className="flex justify-between text-[9px] font-black border-t border-dotted border-slate-400 pt-1">
+                          <span>TOTAL BAYAR</span>
+                          <span>Rp 105.000</span>
+                        </div>
+                      </div>
+
+                      <div className="text-center text-[7px] text-slate-500 space-y-1 pt-4 border-t border-dashed border-slate-300">
+                        <p className="font-bold uppercase text-slate-700">{tempSettings.footerMessage1}</p>
+                        <p className="italic leading-snug">{tempSettings.footerMessage2}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ==========================================
+              10. BLUETOOTH THERMAL PRINT MODAL OVERLAY
+              ========================================== */}
+          {printTx && (
+            <div className="fixed inset-0 z-50 bg-slate-900/85 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200">
+              
+              {/* Invisible custom print wrapper used strictly by browser window.print() */}
+              <div id="print-receipt-area" className="hidden print:block bg-white text-black font-mono text-[10px] leading-relaxed p-2 w-[280px] mx-auto">
+                <div className="text-center space-y-1">
+                  {invoiceSettings.showLogo && invoiceSettings.logoUrl && (
+                    <div className="flex justify-center mb-1.5">
+                      <img 
+                        src={invoiceSettings.logoUrl} 
+                        alt="Kop Logo BASTIKA" 
+                        className="h-12 w-12 object-contain rounded-full border border-slate-200" 
+                        referrerPolicy="no-referrer"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).src = "/icon.jpg";
+                        }}
+                      />
+                    </div>
+                  )}
+                  <h3 className="font-extrabold text-xs uppercase tracking-wide">{invoiceSettings.storeName}</h3>
+                  <p className="text-[8px] font-semibold italic">{invoiceSettings.slogan}</p>
+                  <p className="text-[8px] whitespace-pre-line leading-tight px-1">{invoiceSettings.address}</p>
+                  <p className="text-[8px] font-bold">Telp/WA: {invoiceSettings.phone}</p>
+                  
+                  <div className="py-1">
+                    <p className="text-[8px] font-extrabold bg-slate-100 py-0.5 rounded border border-slate-200">
+                      {invoiceSettings.headerMessage || "NOTA PENJUALAN"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="text-[8px] space-y-0.5 pt-2 border-t border-dashed border-slate-300">
+                  <div>TANGGAL : {new Date(printTx.date).toLocaleString("id-ID")}</div>
+                  <div>INVOICE : {printTx.id}</div>
+                  <div>KASIR   : {printTx.operatorEmail}</div>
+                </div>
+
+                <div className="border-t border-dashed border-slate-300 my-2 pt-1.5">
+                  <div className="text-[8px] font-bold pb-1 flex justify-between">
+                    <span>AROMA & KEMASAN</span>
+                    <span>JUMLAH</span>
+                  </div>
+                  
+                  {/* Scent Row */}
+                  <div className="text-[8px] space-y-0.5">
+                    <div className="flex justify-between font-bold">
+                      <span>Bibit {printTx.scentName} ({printTx.volumeMl}ml)</span>
+                      <span>
+                        Rp {((printTx.volumeMl || 0) * (prices.find(p => p.scentName === printTx.scentName)?.pricePerMl || 3500) * (printTx.bottleCount || 1)).toLocaleString("id-ID")}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-[7px] text-slate-500 pl-2">
+                      <span>{printTx.volumeMl} ml x Rp {(prices.find(p => p.scentName === printTx.scentName)?.pricePerMl || 3500).toLocaleString("id-ID")} /ml</span>
+                    </div>
+                  </div>
+
+                  {/* Bottle Row if any */}
+                  {printTx.bottleSize && printTx.bottleSize !== "None" && (
+                    <div className="text-[8px] pt-1 flex justify-between">
+                      <span>Botol {printTx.bottleSize} ({printTx.bottleCount} pcs)</span>
+                      <span>
+                        Rp {((bottleSizes.find(b => b.size === printTx.bottleSize)?.price || 0) * (printTx.bottleCount || 1)).toLocaleString("id-ID")}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="border-t border-dashed border-slate-300 my-2 pt-1.5 space-y-0.5">
+                  <div className="flex justify-between text-[8px]">
+                    <span>SUBTOTAL</span>
+                    <span>
+                      Rp {(
+                        ((printTx.volumeMl || 0) * (prices.find(p => p.scentName === printTx.scentName)?.pricePerMl || 3500) * (printTx.bottleCount || 1)) +
+                        ((printTx.bottleSize && printTx.bottleSize !== "None" ? (bottleSizes.find(b => b.size === printTx.bottleSize)?.price || 0) : 0) * (printTx.bottleCount || 1))
+                      ).toLocaleString("id-ID")}
+                    </span>
+                  </div>
+                  {printTx.discountNominal ? (
+                    <div className="flex justify-between text-[8px] font-bold">
+                      <span>DISKON PROMO</span>
+                      <span>-Rp {printTx.discountNominal.toLocaleString("id-ID")}</span>
+                    </div>
+                  ) : null}
+                  <div className="flex justify-between text-[9px] font-black border-t border-dotted border-slate-400 pt-1">
+                    <span>TOTAL BAYAR</span>
+                    <span>Rp {printTx.totalPrice.toLocaleString("id-ID")}</span>
+                  </div>
+                </div>
+
+                <div className="text-center text-[7px] space-y-0.5 pt-3 border-t border-dashed border-slate-300">
+                  <p className="font-bold text-slate-800 uppercase">{invoiceSettings.footerMessage1}</p>
+                  <p className="italic">{invoiceSettings.footerMessage2}</p>
+                </div>
+              </div>
+
+              {/* On-screen visual preview box */}
+              <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col h-fit max-h-[90vh]">
+                <div className="p-5 border-b border-slate-800 flex justify-between items-center bg-slate-950/50">
+                  <div className="flex items-center gap-3">
+                    <div className="h-8 w-8 rounded-xl bg-emerald-600/25 border border-emerald-500/30 flex items-center justify-center">
+                      <Printer className="h-4 w-4 text-emerald-400" />
+                    </div>
+                    <div>
+                      <h4 className="font-extrabold text-xs text-white uppercase tracking-wider">Cetak Invoice Mini Bluetooth</h4>
+                      <p className="text-[10px] text-slate-400">Portrait, Lebar Kertas {invoiceSettings.paperWidth}</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setPrintTx(null)}
+                    className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+                  >
+                    <X className="h-4.5 w-4.5" />
+                  </button>
+                </div>
+
+                <div className="p-6 overflow-y-auto flex-1 bg-slate-950/20 space-y-6 flex flex-col items-center">
+                  
+                  {/* Explanatory badge */}
+                  <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-3 text-left w-full text-[11px] text-emerald-400 leading-normal flex gap-2.5 items-start">
+                    <Info className="h-4 w-4 shrink-0 mt-0.5 text-emerald-400" />
+                    <span>
+                      Nota siap dicetak! Hubungkan browser ke printer thermal bluetooth mini Anda lewat system printer driver (pilih ukuran kertas yang sesuai pada browser).
+                    </span>
+                  </div>
+
+                  {/* Aesthetic On-Screen Thermal Paper */}
+                  <div className="bg-white text-black p-5 shadow-2xl font-mono text-[9px] leading-relaxed relative border border-slate-200 select-none rounded-sm w-[250px] md:w-[280px]">
+                    {/* Top edge jagged lines */}
+                    <div className="absolute top-0 left-0 right-0 h-1 bg-repeat-x bg-[linear-gradient(45deg,transparent_33.3%,#ddd_33.3%,#ddd_66.6%,transparent_66.6%)] bg-[length:6px_4px]"></div>
+
+                    <div className="text-center space-y-1 pt-3">
+                      {invoiceSettings.showLogo && invoiceSettings.logoUrl && (
+                        <div className="flex justify-center mb-1">
+                          <img 
+                            src={invoiceSettings.logoUrl} 
+                            alt="Logo Toko" 
+                            className="h-10 w-10 object-contain rounded-full border border-slate-200" 
+                            referrerPolicy="no-referrer"
+                            onError={(e) => {
+                              (e.currentTarget as HTMLImageElement).src = "/icon.jpg";
+                            }}
+                          />
+                        </div>
+                      )}
+                      <h5 className="font-extrabold text-xs uppercase tracking-wide leading-none">{invoiceSettings.storeName}</h5>
+                      <p className="text-[7px] text-slate-600 font-semibold italic">{invoiceSettings.slogan}</p>
+                      <p className="text-[7px] text-slate-600 whitespace-pre-line leading-tight px-1">{invoiceSettings.address}</p>
+                      <p className="text-[7px] text-slate-600 font-bold">Telp/WA: {invoiceSettings.phone}</p>
+                      
+                      <div className="py-1">
+                        <p className="text-[7px] font-extrabold bg-slate-100 py-0.5 rounded border border-slate-200 text-slate-700">
+                          {invoiceSettings.headerMessage || "BUKTI PENJUALAN"}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="text-[7px] text-slate-700 space-y-0.5 pt-2 border-t border-dashed border-slate-300">
+                      <div className="flex justify-between">
+                        <span>TANGGAL : {new Date(printTx.date).toLocaleString("id-ID")}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>INVOICE : {printTx.id}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>KASIR   : {printTx.operatorEmail}</span>
+                      </div>
+                    </div>
+
+                    <div className="border-t border-dashed border-slate-300 my-2 pt-1 flex flex-col gap-1">
+                      <div className="text-[7px] font-bold text-slate-800 pb-0.5 flex justify-between">
+                        <span>AROMA & KEMASAN</span>
+                        <span>JUMLAH</span>
+                      </div>
+                      
+                      <div className="text-[7px] text-slate-800 space-y-0.5">
+                        <div className="flex justify-between font-semibold">
+                          <span>Bibit {printTx.scentName} ({printTx.volumeMl}ml)</span>
+                          <span>
+                            Rp {((printTx.volumeMl || 0) * (prices.find(p => p.scentName === printTx.scentName)?.pricePerMl || 3500) * (printTx.bottleCount || 1)).toLocaleString("id-ID")}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-[6px] text-slate-500 pl-1">
+                          <span>{printTx.volumeMl} ml x Rp {(prices.find(p => p.scentName === printTx.scentName)?.pricePerMl || 3500).toLocaleString("id-ID")} /ml</span>
+                        </div>
+                      </div>
+
+                      {printTx.bottleSize && printTx.bottleSize !== "None" && (
+                        <div className="text-[7px] pt-1 flex justify-between text-slate-800">
+                          <span>Botol {printTx.bottleSize} ({printTx.bottleCount} pcs)</span>
+                          <span>
+                            Rp {((bottleSizes.find(b => b.size === printTx.bottleSize)?.price || 0) * (printTx.bottleCount || 1)).toLocaleString("id-ID")}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="border-t border-dashed border-slate-300 my-2 pt-1.5 space-y-0.5">
+                      <div className="flex justify-between text-[7px] text-slate-700">
+                        <span>SUBTOTAL</span>
+                        <span>
+                          Rp {(
+                            ((printTx.volumeMl || 0) * (prices.find(p => p.scentName === printTx.scentName)?.pricePerMl || 3500) * (printTx.bottleCount || 1)) +
+                            ((printTx.bottleSize && printTx.bottleSize !== "None" ? (bottleSizes.find(b => b.size === printTx.bottleSize)?.price || 0) : 0) * (printTx.bottleCount || 1))
+                          ).toLocaleString("id-ID")}
+                        </span>
+                      </div>
+                      {printTx.discountNominal ? (
+                        <div className="flex justify-between text-[7px] font-bold text-emerald-700">
+                          <span>DISKON PROMO</span>
+                          <span>-Rp {printTx.discountNominal.toLocaleString("id-ID")}</span>
+                        </div>
+                      ) : null}
+                      <div className="flex justify-between text-[8px] font-black border-t border-dotted border-slate-400 pt-1">
+                        <span>TOTAL BAYAR</span>
+                        <span>Rp {printTx.totalPrice.toLocaleString("id-ID")}</span>
+                      </div>
+                    </div>
+
+                    <div className="text-center text-[6px] text-slate-500 space-y-0.5 pt-3 border-t border-dashed border-slate-300">
+                      <p className="font-bold text-slate-700 uppercase">{invoiceSettings.footerMessage1}</p>
+                      <p className="italic leading-snug">{invoiceSettings.footerMessage2}</p>
+                    </div>
+
+                    {/* Bottom edge jagged lines */}
+                    <div className="absolute bottom-0 left-0 right-0 h-1 bg-repeat-x bg-[linear-gradient(225deg,transparent_33.3%,#ddd_33.3%,#ddd_66.6%,transparent_66.6%)] bg-[length:6px_4px]"></div>
+                  </div>
+
+                </div>
+
+                <div className="p-5 border-t border-slate-800 bg-slate-950/50 flex gap-3">
+                  <button
+                    onClick={() => setPrintTx(null)}
+                    className="flex-1 border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-800 hover:border-slate-600 font-extrabold text-xs py-3 rounded-xl transition-all cursor-pointer text-center"
+                  >
+                    Tutup
+                  </button>
+                  <button
+                    onClick={() => window.print()}
+                    className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs py-3 rounded-xl shadow-md flex items-center justify-center gap-2 transition-all cursor-pointer"
+                  >
+                    <Printer className="h-4.5 w-4.5" />
+                    Cetak Sekarang
+                  </button>
+                </div>
+              </div>
+
+            </div>
+          )}
+
+          {/* ==========================================
+              11. STYLE BLOCK FOR PORTRAIT PRINT LAYOUT
+              ========================================== */}
+          <style>{`
+            @media print {
+              body * {
+                visibility: hidden !important;
+              }
+              #print-receipt-area, #print-receipt-area * {
+                visibility: visible !important;
+              }
+              #print-receipt-area {
+                position: absolute !important;
+                left: 0 !important;
+                top: 0 !important;
+                width: 100% !important;
+                max-width: 280px !important; /* Forces narrow thermal printer dimension on paper */
+                margin: 0 !important;
+                padding: 10px !important;
+                background: white !important;
+                color: black !important;
+              }
+              * {
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+              }
+            }
+          `}</style>
 
         </div>
       </main>

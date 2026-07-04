@@ -71,3 +71,17 @@ export interface BottleSize {
   price: number;
   addedAt: string;
 }
+
+export interface InvoiceSettings {
+  storeName: string;
+  slogan: string;
+  address: string;
+  phone: string;
+  headerMessage: string;
+  footerMessage1: string;
+  footerMessage2: string;
+  paperWidth: "58mm" | "80mm";
+  logoUrl: string;
+  showLogo: boolean;
+}
+

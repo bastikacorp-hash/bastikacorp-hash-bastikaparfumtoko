@@ -24,7 +24,8 @@ import {
   Salary, 
   CashMutation, 
   UserProfile,
-  BottleSize
+  BottleSize,
+  InvoiceSettings
 } from "./types";
 
 // Helper for unique ID generation if Firestore auto-id isn't used
@@ -739,4 +740,35 @@ export async function updateInitialCapital(amount: number) {
     });
   });
 }
+
+// ==========================================
+// INVOICE SETTINGS SERVICE
+// ==========================================
+export function subscribeToInvoiceSettings(callback: (settings: InvoiceSettings) => void) {
+  const defaultSettings: InvoiceSettings = {
+    storeName: "BASTIKA PARFUM",
+    slogan: "THE PREMIUM SCENTS",
+    address: "Komp. Ruko Bastika, Jl. Raya Wangi No. 5, Jakarta",
+    phone: "0812-3456-7890",
+    headerMessage: "BUKTI PENJUALAN RESMI",
+    footerMessage1: "Terima Kasih Atas Kunjungan Anda",
+    footerMessage2: "Barang yang sudah dibeli tidak dapat ditukar/dikembalikan.",
+    paperWidth: "58mm",
+    logoUrl: "/icon.jpg",
+    showLogo: true
+  };
+
+  return onSnapshot(doc(db, "config", "invoice"), (snapshot) => {
+    if (snapshot.exists()) {
+      callback({ ...defaultSettings, ...snapshot.data() } as InvoiceSettings);
+    } else {
+      callback(defaultSettings);
+    }
+  });
+}
+
+export async function updateInvoiceSettings(settings: InvoiceSettings) {
+  await setDoc(doc(db, "config", "invoice"), settings);
+}
+
 

@@ -23,7 +23,8 @@ import {
   Transaction, 
   Salary, 
   CashMutation, 
-  UserProfile 
+  UserProfile,
+  BottleSize
 } from "./types";
 
 // Helper for unique ID generation if Firestore auto-id isn't used
@@ -45,8 +46,8 @@ export async function seedInitialDataIfEmpty() {
     // 1. Initial Client Whitelist
     const initialClients: UserProfile[] = [
       { email: "bastikacorp@gmail.com", role: "admin", addedAt: new Date().toISOString() },
-      { email: "budi@gmail.com", role: "client", addedAt: new Date().toISOString() },
-      { email: "siti@gmail.com", role: "client", addedAt: new Date().toISOString() },
+      { email: "budi@bastikaparfum.local", role: "client", addedAt: new Date().toISOString(), username: "budi" },
+      { email: "siti@bastikaparfum.local", role: "client", addedAt: new Date().toISOString(), username: "siti" },
     ];
     for (const client of initialClients) {
       await setDoc(doc(db, "users", client.email), client);
@@ -611,4 +612,75 @@ export async function deleteClientUser(email: string) {
     throw new Error("Admin utama 'bastikacorp@gmail.com' tidak bisa dihapus!");
   }
   await deleteDoc(doc(db, "users", email.trim().toLowerCase()));
+}
+
+// ==========================================
+// CUSTOM BOTTLE SIZES SERVICE
+// ==========================================
+export function subscribeToBottleSizes(callback: (sizes: BottleSize[]) => void, errorCallback?: (error: any) => void) {
+  return onSnapshot(
+    query(collection(db, "bottle_sizes"), orderBy("addedAt", "asc")),
+    async (snapshot) => {
+      const list: BottleSize[] = [];
+      snapshot.forEach((docSnap) => {
+        list.push(docSnap.data() as BottleSize);
+      });
+      
+      if (list.length === 0) {
+        // Auto-seed default bottle sizes if empty
+        const defaults: BottleSize[] = [
+          { id: "30ml", size: "30ml", price: 10000, addedAt: new Date().toISOString() },
+          { id: "50ml", size: "50ml", price: 15000, addedAt: new Date().toISOString() },
+          { id: "100ml", size: "100ml", price: 25000, addedAt: new Date().toISOString() }
+        ];
+        try {
+          for (const item of defaults) {
+            await setDoc(doc(db, "bottle_sizes", item.id), item);
+          }
+        } catch (err) {
+          console.error("Gagal auto-seed bottle_sizes:", err);
+        }
+        return;
+      }
+      
+      callback(list);
+    },
+    (error) => {
+      if (errorCallback) {
+        errorCallback(error);
+      } else {
+        console.error("Error in subscribeToBottleSizes:", error);
+      }
+    }
+  );
+}
+
+export async function addBottleSize(size: string, price: number) {
+  const cleanSize = size.trim();
+  const id = cleanSize.toLowerCase().replace(/\s+/g, "");
+  
+  // 1. Add to bottle_sizes
+  await setDoc(doc(db, "bottle_sizes", id), {
+    id,
+    size: cleanSize,
+    price,
+    addedAt: new Date().toISOString()
+  });
+
+  // 2. Ensure stock document exists for this bottle size
+  const stockId = `bottle_${cleanSize}`;
+  const stockRef = doc(db, "stocks", stockId);
+  const stockSnap = await getDoc(stockRef);
+  if (!stockSnap.exists()) {
+    await setDoc(stockRef, {
+      id: stockId,
+      type: "bottle",
+      size: cleanSize,
+      quantity: 0 // starting with 0 stock until they purchase/adjust
+    });
+  }
+}
+
+export async function deleteBottleSize(id: string) {
+  await deleteDoc(doc(db, "bottle_sizes", id));
 }

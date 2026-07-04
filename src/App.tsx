@@ -33,7 +33,10 @@ import {
   addManualCashMutation,
   subscribeToClients,
   addClientUser,
-  deleteClientUser
+  deleteClientUser,
+  subscribeToBottleSizes,
+  addBottleSize,
+  deleteBottleSize
 } from "./dbService";
 import { 
   Shelf as ShelfType, 
@@ -43,7 +46,8 @@ import {
   Salary, 
   CashMutation, 
   UserProfile, 
-  UserRole 
+  UserRole,
+  BottleSize
 } from "./types";
 import { 
   ShoppingBag, 
@@ -99,6 +103,12 @@ export default function App() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [salaries, setSalaries] = useState<Salary[]>([]);
   const [cashLedger, setCashLedger] = useState<CashMutation[]>([]);
+  const [bottleSizes, setBottleSizes] = useState<BottleSize[]>([]);
+
+  // State for adding new custom bottle size
+  const [newBottleSize, setNewBottleSize] = useState("");
+  const [newBottlePrice, setNewBottlePrice] = useState<number>(0);
+  const [showAddBottleSize, setShowAddBottleSize] = useState(false);
 
   // Navigation / UI State
   const [activeTab, setActiveTab] = useState<string>("dashboard"); // 'dashboard', 'shelves', 'stocks', 'sales', 'purchases', 'accounting', 'users', 'history'
@@ -170,10 +180,13 @@ export default function App() {
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       if (user) {
         setCurrentUser(user);
-        // Seed database once user is authenticated
-        seedInitialDataIfEmpty().then(() => {
-          showToast("Koneksi cloud terhubung. Database tersinkronisasi.", "info");
-        });
+        const emailClean = user.email?.trim().toLowerCase();
+        if (emailClean === "bastikacorp@gmail.com") {
+          // Seed database once user is authenticated
+          seedInitialDataIfEmpty().then(() => {
+            showToast("Koneksi cloud terhubung. Database tersinkronisasi.", "info");
+          });
+        }
       } else {
         setCurrentUser(null);
         setUserRole(null);
@@ -278,8 +291,15 @@ export default function App() {
     const unsubPrices = subscribeToPrices(setPrices);
     const unsubStocks = subscribeToStocks(setStocks);
     const unsubTx = subscribeToTransactions(setTransactions);
-    const unsubSalaries = subscribeToSalaries(setSalaries);
-    const unsubLedger = subscribeToCashLedger(setCashLedger);
+    const unsubBottleSizes = subscribeToBottleSizes(setBottleSizes);
+
+    let unsubSalaries = () => {};
+    let unsubLedger = () => {};
+
+    if (userRole === "admin") {
+      unsubSalaries = subscribeToSalaries(setSalaries);
+      unsubLedger = subscribeToCashLedger(setCashLedger);
+    }
 
     return () => {
       unsubCash();
@@ -287,6 +307,7 @@ export default function App() {
       unsubPrices();
       unsubStocks();
       unsubTx();
+      unsubBottleSizes();
       unsubSalaries();
       unsubLedger();
     };
@@ -304,16 +325,19 @@ export default function App() {
     const matchedPrice = prices.find(p => p.scentName === saleScent);
     const pricePerMl = matchedPrice ? matchedPrice.pricePerMl : 0;
     
-    // Bottle rates: 30ml = Rp 10.000, 50ml = Rp 15.000, 100ml = Rp 25.000, None = Rp 0
+    // Bottle rates: dynamic based on bottleSizes, None = Rp 0
     let bottleFee = 0;
-    if (saleBottleSize === "30ml") bottleFee = 10000;
-    else if (saleBottleSize === "50ml") bottleFee = 15000;
-    else if (saleBottleSize === "100ml") bottleFee = 25000;
+    if (saleBottleSize !== "None") {
+      const matchedBottle = bottleSizes.find(b => b.size === saleBottleSize);
+      if (matchedBottle) {
+        bottleFee = matchedBottle.price;
+      }
+    }
 
     const baseCost = (saleVolume * pricePerMl) + bottleFee;
     const computedTotal = baseCost * saleBottleCount;
     setSaleTotalPrice(computedTotal);
-  }, [saleScent, saleVolume, saleBottleSize, saleBottleCount, prices]);
+  }, [saleScent, saleVolume, saleBottleSize, saleBottleCount, prices, bottleSizes]);
 
   // Currency Formatter helper (Indonesian Rupiah)
   const formatRupiah = (value: number) => {
@@ -539,6 +563,29 @@ export default function App() {
       setPurchaseDesc("");
     } catch (err: any) {
       showToast(err.message || "Gagal mencatat pembelian", "error");
+    }
+  };
+
+  const handleAddNewBottleSize = async () => {
+    if (!newBottleSize.trim()) {
+      showToast("Nama ukuran botol tidak boleh kosong!", "error");
+      return;
+    }
+    if (newBottlePrice <= 0) {
+      showToast("Harga/biaya botol harus lebih besar dari 0!", "error");
+      return;
+    }
+    try {
+      const cleanSize = newBottleSize.trim();
+      await addBottleSize(cleanSize, newBottlePrice);
+      setPurchaseBottleSize(cleanSize);
+      setShowAddBottleSize(false);
+      setNewBottleSize("");
+      setNewBottlePrice(0);
+      showToast(`Ukuran botol ${cleanSize} berhasil ditambahkan!`, "success");
+    } catch (error: any) {
+      console.error(error);
+      showToast(`Gagal menambahkan ukuran botol: ${error.message}`, "error");
     }
   };
 
@@ -1730,9 +1777,11 @@ export default function App() {
                         onChange={(e) => setSaleBottleSize(e.target.value)}
                         className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
                       >
-                        <option value="30ml">Botol 30ml (Rp 10.000)</option>
-                        <option value="50ml">Botol 50ml (Rp 15.000)</option>
-                        <option value="100ml">Botol 100ml (Rp 25.000)</option>
+                        {bottleSizes.map((b) => (
+                          <option key={b.id} value={b.size}>
+                            Botol {b.size} ({formatRupiah(b.price)})
+                          </option>
+                        ))}
                         <option value="None">Tanpa Botol (Hanya Refill)</option>
                       </select>
                     </div>
@@ -1855,16 +1904,75 @@ export default function App() {
                     {purchaseCategory === "botol" && (
                       <div>
                         <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Ukuran Botol Kosong</label>
-                        <select
-                          id="purchase-bottle-select"
-                          value={purchaseBottleSize}
-                          onChange={(e) => setPurchaseBottleSize(e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
-                        >
-                          <option value="30ml">Botol 30ml</option>
-                          <option value="50ml">Botol 50ml</option>
-                          <option value="100ml">Botol 100ml</option>
-                        </select>
+                        <div className="flex gap-2">
+                          <select
+                            id="purchase-bottle-select"
+                            value={purchaseBottleSize}
+                            onChange={(e) => setPurchaseBottleSize(e.target.value)}
+                            className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
+                          >
+                            {bottleSizes.map((b) => (
+                              <option key={b.id} value={b.size}>Botol {b.size}</option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            onClick={() => setShowAddBottleSize(!showAddBottleSize)}
+                            className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl px-3 text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer"
+                            title="Tambah Ukuran Botol Baru"
+                          >
+                            <Plus className="h-4 w-4" />
+                            <span className="hidden sm:inline">Ukuran Baru</span>
+                          </button>
+                        </div>
+
+                        {showAddBottleSize && (
+                          <div className="mt-3 bg-emerald-50/50 border border-emerald-100 rounded-xl p-3 space-y-3">
+                            <span className="block text-[10px] font-bold text-emerald-800 uppercase tracking-wider">Tambah Ukuran Botol Baru</span>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="block text-[10px] text-slate-400 mb-0.5 font-semibold">Nama Ukuran</label>
+                                <input
+                                  type="text"
+                                  placeholder="Contoh: 60ml"
+                                  value={newBottleSize}
+                                  onChange={(e) => setNewBottleSize(e.target.value)}
+                                  className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[10px] text-slate-400 mb-0.5 font-semibold">Harga Jual Botol (Rp)</label>
+                                <input
+                                  type="number"
+                                  placeholder="Contoh: 18000"
+                                  value={newBottlePrice || ""}
+                                  onChange={(e) => setNewBottlePrice(Number(e.target.value))}
+                                  className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                                />
+                              </div>
+                            </div>
+                            <div className="flex gap-2 justify-end">
+                              <button
+                                type="button"
+                                onClick={handleAddNewBottleSize}
+                                className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-1 px-3 rounded-lg text-[11px] transition-colors cursor-pointer"
+                              >
+                                Tambah
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setShowAddBottleSize(false);
+                                  setNewBottleSize("");
+                                  setNewBottlePrice(0);
+                                }}
+                                className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-1 px-3 rounded-lg text-[11px] transition-colors cursor-pointer"
+                              >
+                                Batal
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
 

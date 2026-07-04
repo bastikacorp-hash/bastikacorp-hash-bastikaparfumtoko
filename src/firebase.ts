@@ -1,4 +1,5 @@
 import { initializeApp, deleteApp } from "firebase/app";
+import firebaseConfig from "../firebase-applet-config.json";
 import { 
   getAuth, 
   GoogleAuthProvider, 
@@ -31,15 +32,6 @@ import {
   increment
 } from "firebase/firestore";
 
-const firebaseConfig = {
-  projectId: "gen-lang-client-0505714105",
-  appId: "1:108589670013:web:49bcfd9539fc8772d05b14",
-  apiKey: "AIzaSyCu7tcEqr_5pJBi8ccGrhTSgPm_8XJKjtQ",
-  authDomain: "gen-lang-client-0505714105.firebaseapp.com",
-  storageBucket: "gen-lang-client-0505714105.firebasestorage.app",
-  messagingSenderId: "108589670013"
-};
-
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
@@ -48,7 +40,7 @@ export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
 // Initialize Firestore
-export const db = getFirestore(app);
+export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 
 // Enable Offline Caching (IndexedDB Persistence)
 if (typeof window !== "undefined") {

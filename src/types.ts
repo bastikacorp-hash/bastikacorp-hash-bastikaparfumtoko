@@ -62,3 +62,10 @@ export interface CashMutation {
   description: string;
   referenceId?: string;
 }
+
+export interface BottleSize {
+  id: string;
+  size: string;
+  price: number;
+  addedAt: string;
+}

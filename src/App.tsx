@@ -84,7 +84,8 @@ import {
   Save,
   FileSpreadsheet,
   X,
-  Printer
+  Printer,
+  Upload
 } from "lucide-react";
 
 export default function App() {
@@ -497,6 +498,11 @@ export default function App() {
       setAuthLoading(false);
     }
   };
+
+  // Computed: Get the latest completed sales transaction
+  const lastSaleTx = [...transactions]
+    .filter((t) => t.type === "sale")
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
 
   const handleSignOut = async () => {
     try {
@@ -1046,8 +1052,8 @@ export default function App() {
           <div className="absolute top-0 left-1/4 w-1/2 h-1 bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-600 rounded-full"></div>
           
           <div className="flex flex-col items-center mb-6">
-            <div className="h-14 w-14 bg-gradient-to-tr from-emerald-600 to-teal-500 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-950/40 mb-3 transform hover:scale-105 transition-transform">
-              <ShoppingBag className="h-7 w-7 text-white" />
+            <div className="h-16 w-16 bg-white rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-950/40 mb-3 transform hover:scale-105 transition-transform overflow-hidden p-1">
+              <img src="/icon.jpg" alt="Bastika Logo" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
             </div>
             <h1 className="text-2xl font-bold font-display text-white tracking-tight text-center">BASTIKA PARFUM</h1>
             <p className="text-emerald-400 font-semibold tracking-widest text-[10px] uppercase mt-0.5">Professional Management & POS</p>
@@ -1158,8 +1164,8 @@ export default function App() {
         {/* Brand Header */}
         <div className="p-6 border-b border-slate-800 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="h-9 w-9 bg-gradient-to-tr from-emerald-600 to-teal-500 rounded-xl flex items-center justify-center shadow-md">
-              <ShoppingBag className="h-5 w-5 text-white" />
+            <div className="h-9 w-9 bg-white rounded-xl flex items-center justify-center shadow-md overflow-hidden p-0.5">
+              <img src="/icon.jpg" alt="Bastika Logo" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
             </div>
             <div>
               <h2 className="font-bold font-display text-white tracking-tight text-sm">BASTIKA PARFUM</h2>
@@ -2238,14 +2244,27 @@ export default function App() {
                     </div>
                   </div>
 
-                  <button
-                    id="submit-sale-btn"
-                    type="submit"
-                    className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold py-3.5 px-4 rounded-xl text-xs transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    <Check className="h-4.5 w-4.5" />
-                    SIMPAN & PROSES TRANSAKSI PENJUALAN
-                  </button>
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <button
+                      id="submit-sale-btn"
+                      type="submit"
+                      className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold py-3.5 px-4 rounded-xl text-xs transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <Check className="h-4.5 w-4.5" />
+                      SIMPAN & PROSES TRANSAKSI PENJUALAN
+                    </button>
+                    {lastSaleTx && (
+                      <button
+                        type="button"
+                        onClick={() => setPrintTx(lastSaleTx)}
+                        className="bg-slate-800 hover:bg-slate-700 text-white font-extrabold py-3.5 px-5 rounded-xl text-xs transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                        title="Cetak ulang invoice transaksi penjualan terakhir"
+                      >
+                        <Printer className="h-4.5 w-4.5 text-emerald-400" />
+                        PRINT INVOICE TERAKHIR
+                      </button>
+                    )}
+                  </div>
                 </form>
               </div>
 
@@ -3114,15 +3133,69 @@ export default function App() {
                         </select>
                       </div>
                       <div>
-                        <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Path Gambar Logo (Default: /icon.jpg)</label>
-                        <input
-                          id="inv-logo-url"
-                          type="text"
-                          value={tempSettings.logoUrl}
-                          onChange={(e) => handleSettingChange("logoUrl", e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
-                          placeholder="/icon.jpg"
-                        />
+                        <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Upload Gambar Logo Nota (Real-time)</label>
+                        <div className="flex items-center gap-3">
+                          <label className="flex-1 flex flex-col items-center justify-center border border-dashed border-slate-300 hover:border-emerald-500 rounded-xl p-2 text-center cursor-pointer bg-slate-50 hover:bg-emerald-50/10 transition-all">
+                            <div className="flex flex-col items-center gap-0.5">
+                              <Upload className="h-4 w-4 text-slate-400" />
+                              <span className="text-[10px] font-bold text-slate-600">Pilih File Logo</span>
+                            </div>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={async (e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+                                if (file.size > 300 * 1024) {
+                                  showToast("Ukuran logo maksimal 300KB agar sinkronisasi cloud lancar!", "error");
+                                  return;
+                                }
+                                const reader = new FileReader();
+                                reader.onloadend = async () => {
+                                  const dataUrl = reader.result as string;
+                                  handleSettingChange("logoUrl", dataUrl);
+                                  // REAL-TIME SAVE to Firestore instantly
+                                  try {
+                                    const updated = { ...tempSettings, logoUrl: dataUrl };
+                                    await updateInvoiceSettings(updated);
+                                    showToast("Logo berhasil diupload & disimpan otomatis ke cloud!", "success");
+                                  } catch (err: any) {
+                                    showToast("Gagal simpan logo real-time: " + err.message, "error");
+                                  }
+                                };
+                                reader.readAsDataURL(file);
+                              }}
+                              className="hidden"
+                            />
+                          </label>
+                          {tempSettings.logoUrl && (
+                            <div className="w-12 h-12 bg-slate-50 border border-slate-200 rounded-xl p-1 flex items-center justify-center relative shrink-0">
+                              <img
+                                src={tempSettings.logoUrl}
+                                alt="Logo Preview"
+                                className="max-w-full max-h-full object-contain rounded-md"
+                                referrerPolicy="no-referrer"
+                              />
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  handleSettingChange("logoUrl", "/icon.jpg");
+                                  try {
+                                    const updated = { ...tempSettings, logoUrl: "/icon.jpg" };
+                                    await updateInvoiceSettings(updated);
+                                    showToast("Logo dikembalikan ke default & disimpan secara real-time!", "success");
+                                  } catch (err: any) {
+                                    showToast("Gagal reset logo: " + err.message, "error");
+                                  }
+                                }}
+                                className="absolute -top-1 -right-1 bg-rose-500 hover:bg-rose-600 text-white rounded-full p-0.5 shadow transition-all cursor-pointer"
+                                title="Reset logo default"
+                              >
+                                <X className="h-2 w-2" />
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
 

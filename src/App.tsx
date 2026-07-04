@@ -75,14 +75,18 @@ export default function App() {
   // Auth state
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [customEmail, setCustomEmail] = useState("");
-  const [userRole, setUserRole] = useState<UserRole | null>(null);
+  const [userRole, setUserRole] = useState<UserRole | null>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("bastika_user_role") as UserRole | null;
+    }
+    return null;
+  });
   const [userWhitelist, setUserWhitelist] = useState<UserProfile[]>([]);
   const [authLoading, setAuthLoading] = useState(true);
 
   // Real Email/Password Auth State
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
-  const [isRegisterMode, setIsRegisterMode] = useState(false);
 
   // Core Data State
   const [cashBalance, setCashBalance] = useState(0);
@@ -170,8 +174,11 @@ export default function App() {
       } else {
         setCurrentUser(null);
         setUserRole(null);
+        if (typeof window !== "undefined") {
+          localStorage.removeItem("bastika_user_role");
+        }
+        setAuthLoading(false);
       }
-      setAuthLoading(false);
     });
     return () => unsubscribeAuth();
   }, []);
@@ -180,6 +187,9 @@ export default function App() {
   useEffect(() => {
     if (!currentUser) {
       setUserRole(null);
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("bastika_user_role");
+      }
       return;
     }
 
@@ -190,20 +200,37 @@ export default function App() {
       if (loggedEmail) {
         if (loggedEmail === "bastikacorp@gmail.com") {
           setUserRole("admin");
+          if (typeof window !== "undefined") {
+            localStorage.setItem("bastika_user_role", "admin");
+          }
         } else {
           const userMatch = users.find(u => u.email.toLowerCase() === loggedEmail);
           if (userMatch) {
             setUserRole(userMatch.role);
+            if (typeof window !== "undefined") {
+              localStorage.setItem("bastika_user_role", userMatch.role);
+            }
           } else {
             setUserRole(null); // Not whitelisted
+            if (typeof window !== "undefined") {
+              localStorage.removeItem("bastika_user_role");
+            }
           }
         }
       } else {
         setUserRole(null);
+        if (typeof window !== "undefined") {
+          localStorage.removeItem("bastika_user_role");
+        }
       }
+      setAuthLoading(false);
     }, (error) => {
       console.error("Gagal memuat whitelist:", error);
       setUserRole(null);
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("bastika_user_role");
+      }
+      setAuthLoading(false);
     });
     return () => unsubscribe();
   }, [currentUser]);
@@ -317,7 +344,7 @@ export default function App() {
   const handleEmailAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!loginEmail || !loginPassword) {
-      showToast("Harap isi email dan kata sandi!", "error");
+      showToast("Harap isi nama pengguna/email dan kata sandi!", "error");
       return;
     }
     if (loginPassword.length < 6) {
@@ -326,23 +353,17 @@ export default function App() {
     }
     setAuthLoading(true);
     try {
-      const cleanEmail = loginEmail.trim().toLowerCase();
-      if (isRegisterMode) {
-        const cred = await createUserWithEmailAndPassword(auth, cleanEmail, loginPassword);
-        showToast("Registrasi berhasil!", "success");
-        await seedInitialDataIfEmpty();
-      } else {
-        const cred = await signInWithEmailAndPassword(auth, cleanEmail, loginPassword);
-        showToast("Berhasil masuk!", "success");
-      }
+      const isEmail = loginEmail.includes("@");
+      const cleanEmail = isEmail ? loginEmail.trim().toLowerCase() : `${loginEmail.trim().toLowerCase()}@bastikaparfum.local`;
+      
+      await signInWithEmailAndPassword(auth, cleanEmail, loginPassword);
+      showToast("Berhasil masuk!", "success");
     } catch (err: any) {
       console.error(err);
-      let errMsg = "Gagal autentikasi email";
-      if (err.code === "auth/user-not-found") errMsg = "Email tidak terdaftar!";
-      else if (err.code === "auth/wrong-password") errMsg = "Kata sandi salah!";
-      else if (err.code === "auth/email-already-in-use") errMsg = "Email sudah terdaftar!";
-      else if (err.code === "auth/invalid-credential" || err.code === "auth/invalid-login-credentials") errMsg = "Email atau sandi salah!";
-      showToast(err.message || errMsg, "error");
+      let errMsg = "Gagal masuk. Silakan periksa kembali.";
+      if (err.code === "auth/user-not-found" || err.code === "auth/invalid-email") errMsg = "Nama pengguna atau email tidak terdaftar!";
+      else if (err.code === "auth/wrong-password" || err.code === "auth/invalid-credential" || err.code === "auth/invalid-login-credentials") errMsg = "Nama pengguna/email atau kata sandi salah!";
+      showToast(errMsg, "error");
     } finally {
       setAuthLoading(false);
     }
@@ -354,6 +375,9 @@ export default function App() {
       setCurrentUser(null);
       setCustomEmail("");
       setUserRole(null);
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("bastika_user_role");
+      }
       showToast("Berhasil keluar sistem.", "info");
     } catch (err: any) {
       showToast("Gagal keluar", "error");
@@ -528,39 +552,69 @@ export default function App() {
   const handleAddClient = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newClientEmail) {
-      showToast("Masukkan alamat email Gmail!", "error");
+      const msg = newClientRole === "client" ? "Masukkan nama pengguna / username client!" : "Masukkan alamat email admin!";
+      showToast(msg, "error");
       return;
     }
-    const cleanEmail = newClientEmail.trim().toLowerCase();
     
-    if (newClientPassword && newClientPassword.length < 6) {
+    if (!newClientPassword) {
+      showToast("Kata sandi wajib diisi!", "error");
+      return;
+    }
+    
+    if (newClientPassword.length < 6) {
       showToast("Kata sandi minimal 6 karakter!", "error");
       return;
     }
 
+    let finalEmail = "";
+    let finalUsername: string | undefined = undefined;
+
+    if (newClientRole === "client") {
+      const usernameVal = newClientEmail.trim().toLowerCase();
+      // Username validation: alphanumeric, no spaces, no @
+      if (usernameVal.includes("@") || usernameVal.includes(" ")) {
+        showToast("Username client tidak boleh mengandung spasi atau karakter '@'!", "error");
+        return;
+      }
+      finalEmail = `${usernameVal}@bastikaparfum.local`;
+      finalUsername = usernameVal;
+    } else {
+      const emailVal = newClientEmail.trim().toLowerCase();
+      if (!emailVal.includes("@")) {
+        showToast("Masukkan alamat email admin yang valid!", "error");
+        return;
+      }
+      finalEmail = emailVal;
+    }
+
     try {
       let createdInAuth = false;
-      if (newClientPassword) {
-        try {
-          await createAuthUserWithoutLoggingOut(cleanEmail, newClientPassword);
-          createdInAuth = true;
-        } catch (authErr: any) {
-          console.warn("Auth registration info:", authErr);
-          if (authErr.code === "auth/email-already-in-use") {
-            // Already exists in auth, that's fine. We will just update Firestore.
-            showToast(`Info: Email sudah terdaftar di sistem. Memperbarui hak akses saja.`, "info");
-          } else {
-            throw new Error(`Gagal mendaftarkan di Firebase Auth: ${authErr.message}`);
-          }
+      try {
+        await createAuthUserWithoutLoggingOut(finalEmail, newClientPassword);
+        createdInAuth = true;
+      } catch (authErr: any) {
+        console.warn("Auth registration info:", authErr);
+        if (authErr.code === "auth/email-already-in-use") {
+          // Already exists in auth, that's fine. We will just update Firestore.
+          showToast(`Info: Pengguna sudah terdaftar di Auth. Memperbarui hak akses saja.`, "info");
+        } else {
+          throw new Error(`Gagal mendaftarkan di Firebase Auth: ${authErr.message}`);
         }
       }
 
-      await addClientUser(cleanEmail, newClientRole, newClientPassword || undefined);
+      await addClientUser(finalEmail, newClientRole, newClientPassword, finalUsername);
       
-      if (newClientPassword && createdInAuth) {
-        showToast(`User ${cleanEmail} berhasil didaftarkan sebagai ${newClientRole.toUpperCase()} dengan kata sandi!`, "success");
+      if (createdInAuth) {
+        const successMsg = newClientRole === "client" 
+          ? `User @${finalUsername} berhasil didaftarkan sebagai CLIENT dengan kata sandi!`
+          : `Admin ${finalEmail} berhasil didaftarkan sebagai ADMIN dengan kata sandi!`;
+        showToast(successMsg, "success");
       } else {
-        showToast(`Akses untuk ${cleanEmail} terdaftar sebagai ${newClientRole.toUpperCase()}!`, "success");
+        const updateMsg = newClientRole === "client"
+          ? `Hak akses @${finalUsername} diperbarui sebagai CLIENT!`
+          : `Hak akses ${finalEmail} diperbarui sebagai ADMIN!`;
+        showToast(updateMsg, "success");
       }
       
       setNewClientEmail("");
@@ -675,19 +729,19 @@ export default function App() {
 
             <div className="relative flex py-1 items-center">
               <div className="flex-grow border-t border-slate-700/40"></div>
-              <span className="flex-shrink mx-3 text-slate-500 text-[10px] uppercase tracking-wider font-semibold">Atau Masuk dengan Email</span>
+              <span className="flex-shrink mx-3 text-slate-500 text-[10px] uppercase tracking-wider font-semibold">Atau Masuk dengan Kredensial</span>
               <div className="flex-grow border-t border-slate-700/40"></div>
             </div>
 
-            {/* Real Authentication - Email & Password */}
+            {/* Real Authentication - Email or Username & Password */}
             <form onSubmit={handleEmailAuthSubmit} className="space-y-3 bg-slate-900/40 border border-slate-700/30 rounded-xl p-4">
               <div className="space-y-2">
                 <div>
-                  <label className="block text-[10px] font-semibold text-slate-400 mb-1">Email Karyawan</label>
+                  <label className="block text-[10px] font-semibold text-slate-400 mb-1">Nama Pengguna (Client) / Email (Admin)</label>
                   <input
-                    id="email-login-input"
-                    type="email"
-                    placeholder="nama@email.com"
+                    id="username-login-input"
+                    type="text"
+                    placeholder="Contoh: budi atau admin@gmail.com"
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
                     className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
@@ -695,7 +749,7 @@ export default function App() {
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-semibold text-slate-400 mb-1">Kata Sandi (Min. 6 Karakter)</label>
+                  <label className="block text-[10px] font-semibold text-slate-400 mb-1">Kata Sandi</label>
                   <input
                     id="password-login-input"
                     type="password"
@@ -708,19 +762,13 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="flex gap-2 pt-1 items-center justify-between">
+              <div className="pt-1">
                 <button
+                  id="login-submit-btn"
                   type="submit"
-                  className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-1.5 px-3 rounded-lg text-xs transition-colors cursor-pointer"
+                  className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2 px-3 rounded-lg text-xs transition-colors cursor-pointer"
                 >
-                  {isRegisterMode ? "Daftar Akun" : "Masuk"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsRegisterMode(!isRegisterMode)}
-                  className="text-slate-400 hover:text-emerald-400 font-semibold text-[10px] py-1 px-2"
-                >
-                  {isRegisterMode ? "Sudah Punya Akun?" : "Buat Akun Baru"}
+                  Masuk ke Sistem
                 </button>
               </div>
             </form>
@@ -2063,38 +2111,48 @@ export default function App() {
           {activeTab === "users" && userRole === "admin" && (
             <div className="space-y-6">
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                
-                {/* Whitelist user form */}
+                  {/* Whitelist user form */}
                 <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm h-fit">
                   <h3 className="font-bold text-sm text-slate-900 mb-4 flex items-center gap-2">
                     <UserPlus className="h-4.5 w-4.5 text-emerald-600" />
-                    Tambah Whitelist Email (Client / Admin)
+                    Tambah & Kelola Hak Akses Toko
                   </h3>
 
                   <form onSubmit={handleAddClient} className="space-y-4">
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Alamat Email Gmail Karyawan</label>
-                      <input
-                        id="client-email-input"
-                        type="email"
-                        placeholder="Contoh: karyawan@gmail.com"
-                        value={newClientEmail}
-                        onChange={(e) => setNewClientEmail(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white"
-                      />
-                    </div>
-
                     <div>
                       <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Tingkat Hak Akses</label>
                       <select
                         id="client-role-select"
                         value={newClientRole}
-                        onChange={(e) => setNewClientRole(e.target.value as UserRole)}
+                        onChange={(e) => {
+                          setNewClientRole(e.target.value as UserRole);
+                          setNewClientEmail(""); // Reset input when swapping role
+                        }}
                         className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
                       >
-                        <option value="client">Client (Hanya Input Kasir & Lihat Stok)</option>
-                        <option value="admin">Admin (Akses Penuh Seluruh Sistem)</option>
+                        <option value="client">Client (Username - Hanya Input Kasir & Lihat Stok)</option>
+                        <option value="admin">Admin (Email Gmail - Akses Penuh Seluruh Sistem)</option>
                       </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                        {newClientRole === "client" ? "Nama Pengguna / Username (Client)" : "Alamat Email Gmail (Admin)"}
+                      </label>
+                      <input
+                        id="client-email-input"
+                        type={newClientRole === "client" ? "text" : "email"}
+                        placeholder={newClientRole === "client" ? "Contoh: budi, tika, kasir1 (tanpa spasi/@)" : "Contoh: adminbaru@gmail.com"}
+                        value={newClientEmail}
+                        onChange={(e) => setNewClientEmail(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
+                        required
+                      />
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        {newClientRole === "client" 
+                          ? "Penting: Masukkan username unik tanpa spasi dan tanda '@'."
+                          : "Penting: Masukkan alamat email Google / Gmail yang valid."}
+                      </p>
                     </div>
 
                     <div>
@@ -2102,12 +2160,17 @@ export default function App() {
                       <input
                         id="client-password-input"
                         type="text"
-                        placeholder="Atur password karyawan untuk login"
+                        placeholder="Masukkan password untuk login"
                         value={newClientPassword}
                         onChange={(e) => setNewClientPassword(e.target.value)}
                         className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
+                        required
                       />
-                      <p className="text-[10px] text-slate-400 mt-1">Gunakan kata sandi ini agar karyawan dapat login manual dengan email mereka.</p>
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        {newClientRole === "client"
+                          ? "Gunakan kata sandi ini agar karyawan client dapat langsung masuk menggunakan Username."
+                          : "Gunakan kata sandi ini agar admin dapat login manual menggunakan email Gmail."}
+                      </p>
                     </div>
 
                     <button
@@ -2116,7 +2179,7 @@ export default function App() {
                       className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
                     >
                       <Plus className="h-4 w-4" />
-                      Daftarkan Akses User
+                      Daftarkan Karyawan
                     </button>
                   </form>
                 </div>
@@ -2124,13 +2187,15 @@ export default function App() {
                 {/* Whitelist List Table */}
                 <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm lg:col-span-2">
                   <h3 className="font-bold text-sm text-slate-900 mb-1">Daftar Whitelist Hak Akses Toko</h3>
-                  <p className="text-[11px] text-slate-500 mb-4">Hanya email Gmail yang terdaftar di bawah ini yang dapat masuk ke dalam sistem.</p>
+                  <p className="text-[11px] text-slate-500 mb-4">
+                    Karyawan (Client) masuk menggunakan Username, sedangkan Admin masuk menggunakan alamat email Gmail.
+                  </p>
 
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-xs">
                       <thead>
                         <tr className="bg-slate-50 border-b border-slate-100 text-slate-500 uppercase tracking-wider text-[10px] font-bold">
-                          <th className="py-3 px-4">Email Gmail</th>
+                          <th className="py-3 px-4">Username / Email</th>
                           <th className="py-3 px-4">Hak Akses</th>
                           <th className="py-3 px-4">Kata Sandi</th>
                           <th className="py-3 px-4">Ditambahkan Pada</th>
@@ -2140,7 +2205,16 @@ export default function App() {
                       <tbody className="divide-y divide-slate-100">
                         {userWhitelist.map((u) => (
                           <tr key={u.email} className="hover:bg-slate-50/50 transition-colors">
-                            <td className="py-3 px-4 font-bold text-slate-800">{u.email}</td>
+                            <td className="py-3 px-4 font-bold text-slate-800">
+                              {u.username ? (
+                                <div className="flex flex-col">
+                                  <span className="text-emerald-700">@{u.username}</span>
+                                  <span className="text-[9px] text-slate-400 font-normal">Sistem: {u.email}</span>
+                                </div>
+                              ) : (
+                                u.email
+                              )}
+                            </td>
                             <td className="py-3 px-4">
                               <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase ${
                                 u.role === "admin" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-slate-100 text-slate-600 border border-slate-200"
@@ -2173,7 +2247,6 @@ export default function App() {
                     </table>
                   </div>
                 </div>
-
               </div>
             </div>
           )}

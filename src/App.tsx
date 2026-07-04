@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from "react";
 import { 
   auth, 
+  db,
+  doc,
+  onSnapshot,
   googleProvider, 
   signInWithPopup, 
   signOut, 
@@ -183,7 +186,7 @@ export default function App() {
     return () => unsubscribeAuth();
   }, []);
 
-  // 2. Client Whitelist sync & role evaluation
+  // 2. Client Whitelist sync & role evaluation (Individual subscription)
   useEffect(() => {
     if (!currentUser) {
       setUserRole(null);
@@ -193,29 +196,50 @@ export default function App() {
       return;
     }
 
-    const unsubscribe = subscribeToClients((users) => {
-      setUserWhitelist(users);
-      
-      const loggedEmail = currentUser.email?.trim().toLowerCase();
-      if (loggedEmail) {
-        if (loggedEmail === "bastikacorp@gmail.com") {
+    const emailClean = currentUser.email?.trim().toLowerCase();
+    if (!emailClean) {
+      setUserRole(null);
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("bastika_user_role");
+      }
+      setAuthLoading(false);
+      return;
+    }
+
+    // Subscribe to the individual user's document
+    const userDocRef = doc(db, "users", emailClean);
+    const unsubscribeUserDoc = onSnapshot(userDocRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const userData = docSnap.data();
+        const role = userData.role as UserRole;
+        setUserRole(role);
+        if (typeof window !== "undefined") {
+          localStorage.setItem("bastika_user_role", role);
+        }
+      } else {
+        // Special case for primary admin
+        if (emailClean === "bastikacorp@gmail.com") {
           setUserRole("admin");
           if (typeof window !== "undefined") {
             localStorage.setItem("bastika_user_role", "admin");
           }
+          // Auto-create document for primary admin in Firestore if it doesn't exist
+          addClientUser("bastikacorp@gmail.com", "admin", undefined, "admin").catch(console.error);
         } else {
-          const userMatch = users.find(u => u.email.toLowerCase() === loggedEmail);
-          if (userMatch) {
-            setUserRole(userMatch.role);
-            if (typeof window !== "undefined") {
-              localStorage.setItem("bastika_user_role", userMatch.role);
-            }
-          } else {
-            setUserRole(null); // Not whitelisted
-            if (typeof window !== "undefined") {
-              localStorage.removeItem("bastika_user_role");
-            }
+          setUserRole(null);
+          if (typeof window !== "undefined") {
+            localStorage.removeItem("bastika_user_role");
           }
+        }
+      }
+      setAuthLoading(false);
+    }, (error) => {
+      console.error("Gagal memuat dokumen user:", error);
+      // Fallback for primary admin even if doc fetch failed
+      if (emailClean === "bastikacorp@gmail.com") {
+        setUserRole("admin");
+        if (typeof window !== "undefined") {
+          localStorage.setItem("bastika_user_role", "admin");
         }
       } else {
         setUserRole(null);
@@ -224,16 +248,26 @@ export default function App() {
         }
       }
       setAuthLoading(false);
-    }, (error) => {
-      console.error("Gagal memuat whitelist:", error);
-      setUserRole(null);
-      if (typeof window !== "undefined") {
-        localStorage.removeItem("bastika_user_role");
-      }
-      setAuthLoading(false);
     });
-    return () => unsubscribe();
+
+    return () => unsubscribeUserDoc();
   }, [currentUser]);
+
+  // 2b. Admin-only: Subscribe to all whitelisted users
+  useEffect(() => {
+    if (userRole !== "admin" || !currentUser) {
+      setUserWhitelist([]);
+      return;
+    }
+
+    const unsubscribe = subscribeToClients((users) => {
+      setUserWhitelist(users);
+    }, (error) => {
+      console.error("Gagal memuat list whitelist:", error);
+    });
+
+    return () => unsubscribe();
+  }, [userRole, currentUser]);
 
   // 3. Real-time Subscriptions to DB
   useEffect(() => {
@@ -322,12 +356,12 @@ export default function App() {
     } catch (err: any) {
       console.error("Bypass login error:", err);
       showToast("Gagal masuk lewat simulasi email", "error");
-    } finally {
       setAuthLoading(false);
     }
   };
 
   const handleGoogleSignIn = async () => {
+    setAuthLoading(true);
     try {
       const result = await signInWithPopup(auth, googleProvider);
       showToast(`Selamat datang, ${result.user.displayName || result.user.email}!`, "success");
@@ -338,6 +372,7 @@ export default function App() {
       } else {
         showToast(err.message || "Gagal masuk lewat Google", "error");
       }
+      setAuthLoading(false);
     }
   };
 
@@ -364,7 +399,6 @@ export default function App() {
       if (err.code === "auth/user-not-found" || err.code === "auth/invalid-email") errMsg = "Nama pengguna atau email tidak terdaftar!";
       else if (err.code === "auth/wrong-password" || err.code === "auth/invalid-credential" || err.code === "auth/invalid-login-credentials") errMsg = "Nama pengguna/email atau kata sandi salah!";
       showToast(errMsg, "error");
-    } finally {
       setAuthLoading(false);
     }
   };

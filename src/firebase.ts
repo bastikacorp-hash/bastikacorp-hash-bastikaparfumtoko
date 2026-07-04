@@ -1,4 +1,4 @@
-import { initializeApp } from "firebase/app";
+import { initializeApp, deleteApp } from "firebase/app";
 import { 
   getAuth, 
   GoogleAuthProvider, 
@@ -63,6 +63,18 @@ if (typeof window !== "undefined") {
         console.warn("Firestore persistence unimplemented: Browser does not support IndexedDB.");
       }
     });
+}
+
+export async function createAuthUserWithoutLoggingOut(email: string, pass: string) {
+  const tempAppName = `TempApp_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+  const tempApp = initializeApp(firebaseConfig, tempAppName);
+  const tempAuth = getAuth(tempApp);
+  try {
+    const cred = await createUserWithEmailAndPassword(tempAuth, email, pass);
+    return cred.user;
+  } finally {
+    await deleteApp(tempApp);
+  }
 }
 
 export {

@@ -7,6 +7,7 @@ import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  createAuthUserWithoutLoggingOut,
   User 
 } from "./firebase";
 import {
@@ -127,6 +128,7 @@ export default function App() {
   // Client whitelisting form state
   const [newClientEmail, setNewClientEmail] = useState("");
   const [newClientRole, setNewClientRole] = useState<UserRole>("client");
+  const [newClientPassword, setNewClientPassword] = useState("");
 
   // Manual cash mutation state
   const [manualMutationType, setManualMutationType] = useState<"in" | "out">("in");
@@ -529,10 +531,40 @@ export default function App() {
       showToast("Masukkan alamat email Gmail!", "error");
       return;
     }
+    const cleanEmail = newClientEmail.trim().toLowerCase();
+    
+    if (newClientPassword && newClientPassword.length < 6) {
+      showToast("Kata sandi minimal 6 karakter!", "error");
+      return;
+    }
+
     try {
-      await addClientUser(newClientEmail, newClientRole);
-      showToast(`User ${newClientEmail} terdaftar sebagai ${newClientRole.toUpperCase()}!`);
+      let createdInAuth = false;
+      if (newClientPassword) {
+        try {
+          await createAuthUserWithoutLoggingOut(cleanEmail, newClientPassword);
+          createdInAuth = true;
+        } catch (authErr: any) {
+          console.warn("Auth registration info:", authErr);
+          if (authErr.code === "auth/email-already-in-use") {
+            // Already exists in auth, that's fine. We will just update Firestore.
+            showToast(`Info: Email sudah terdaftar di sistem. Memperbarui hak akses saja.`, "info");
+          } else {
+            throw new Error(`Gagal mendaftarkan di Firebase Auth: ${authErr.message}`);
+          }
+        }
+      }
+
+      await addClientUser(cleanEmail, newClientRole, newClientPassword || undefined);
+      
+      if (newClientPassword && createdInAuth) {
+        showToast(`User ${cleanEmail} berhasil didaftarkan sebagai ${newClientRole.toUpperCase()} dengan kata sandi!`, "success");
+      } else {
+        showToast(`Akses untuk ${cleanEmail} terdaftar sebagai ${newClientRole.toUpperCase()}!`, "success");
+      }
+      
       setNewClientEmail("");
+      setNewClientPassword("");
     } catch (err: any) {
       showToast(err.message, "error");
     }
@@ -692,57 +724,6 @@ export default function App() {
                 </button>
               </div>
             </form>
-
-            <div className="relative flex py-1 items-center">
-              <div className="flex-grow border-t border-slate-700/40"></div>
-              <span className="flex-shrink mx-3 text-slate-500 text-[10px] uppercase tracking-wider font-semibold">Bypass Simulasi Peran</span>
-              <div className="flex-grow border-t border-slate-700/40"></div>
-            </div>
-
-            {/* Direct Bypass login options for sandbox environment (highly recommended for review and testing) */}
-            <div className="bg-slate-900/60 border border-slate-700/30 rounded-xl p-4 space-y-3">
-              <p className="text-slate-400 text-[10px] leading-snug">
-                *Klik tombol di bawah ini untuk masuk secara instan menggunakan simulasi akun real-auth di AI Studio maupun Netlify:
-              </p>
-              
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  id="bypass-admin-btn"
-                  onClick={() => handleBypassLogin("bastikacorp@gmail.com")}
-                  className="bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 text-emerald-300 font-medium py-2 px-3 rounded-lg text-[10px] transition-colors flex flex-col items-center justify-center gap-0.5"
-                >
-                  <span className="font-bold">ADMIN UTAMA</span>
-                  <span className="text-[9px] text-slate-400">bastikacorp@gmail.com</span>
-                </button>
-
-                <button
-                  id="bypass-client-btn"
-                  onClick={() => handleBypassLogin("budi@gmail.com")}
-                  className="bg-slate-700 hover:bg-slate-600 text-slate-200 border border-slate-600/50 font-medium py-2 px-3 rounded-lg text-[10px] transition-colors flex flex-col items-center justify-center gap-0.5"
-                >
-                  <span className="font-bold">CLIENT (KASIR)</span>
-                  <span className="text-[9px] text-slate-400">budi@gmail.com</span>
-                </button>
-              </div>
-
-              <div className="flex gap-2 pt-1">
-                <input
-                  id="custom-email-input"
-                  type="email"
-                  placeholder="Atau masukkan email lain..."
-                  value={customEmail}
-                  onChange={(e) => setCustomEmail(e.target.value)}
-                  className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                />
-                <button
-                  id="bypass-custom-btn"
-                  onClick={() => customEmail ? handleBypassLogin(customEmail) : showToast("Masukkan email dulu!", "error")}
-                  className="bg-teal-600 hover:bg-teal-500 text-white font-medium px-3 rounded-lg text-xs transition-colors"
-                >
-                  Masuk
-                </button>
-              </div>
-            </div>
 
             {/* Whitelisted emails notice */}
             {currentUser && !userRole && (
@@ -2116,6 +2097,19 @@ export default function App() {
                       </select>
                     </div>
 
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Kata Sandi Akun (Min. 6 Karakter)</label>
+                      <input
+                        id="client-password-input"
+                        type="text"
+                        placeholder="Atur password karyawan untuk login"
+                        value={newClientPassword}
+                        onChange={(e) => setNewClientPassword(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
+                      />
+                      <p className="text-[10px] text-slate-400 mt-1">Gunakan kata sandi ini agar karyawan dapat login manual dengan email mereka.</p>
+                    </div>
+
                     <button
                       id="save-client-btn"
                       type="submit"
@@ -2138,6 +2132,7 @@ export default function App() {
                         <tr className="bg-slate-50 border-b border-slate-100 text-slate-500 uppercase tracking-wider text-[10px] font-bold">
                           <th className="py-3 px-4">Email Gmail</th>
                           <th className="py-3 px-4">Hak Akses</th>
+                          <th className="py-3 px-4">Kata Sandi</th>
                           <th className="py-3 px-4">Ditambahkan Pada</th>
                           <th className="py-3 px-4 text-right">Aksi</th>
                         </tr>
@@ -2152,6 +2147,9 @@ export default function App() {
                               }`}>
                                 {u.role}
                               </span>
+                            </td>
+                            <td className="py-3 px-4 text-slate-700 font-mono text-xs">
+                              {u.password ? u.password : <span className="text-[10px] text-slate-400 italic">Login Google Only</span>}
                             </td>
                             <td className="py-3 px-4 text-slate-500 font-mono">
                               {new Date(u.addedAt).toLocaleDateString("id-ID")}

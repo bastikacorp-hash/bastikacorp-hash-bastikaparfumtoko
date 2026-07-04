@@ -4,6 +4,7 @@ export interface UserProfile {
   email: string;
   role: UserRole;
   addedAt: string;
+  password?: string;
 }
 
 export interface Shelf {

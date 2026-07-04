@@ -590,13 +590,17 @@ export function subscribeToClients(
   );
 }
 
-export async function addClientUser(email: string, role: "admin" | "client" = "client") {
+export async function addClientUser(email: string, role: "admin" | "client" = "client", password?: string) {
   const emailClean = email.trim().toLowerCase();
-  await setDoc(doc(db, "users", emailClean), {
+  const data: any = {
     email: emailClean,
     role,
     addedAt: new Date().toISOString()
-  });
+  };
+  if (password) {
+    data.password = password;
+  }
+  await setDoc(doc(db, "users", emailClean), data);
 }
 
 export async function deleteClientUser(email: string) {

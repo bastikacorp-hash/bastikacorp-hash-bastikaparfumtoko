@@ -314,7 +314,11 @@ export async function addTransaction(tx: Omit<Transaction, "id">) {
 
       // C. Update Cash Balance (Uang Masuk)
       const newBalance = currentBalance + tx.totalPrice;
-      transaction.update(cashRef, { balance: newBalance });
+      if (cashSnap.exists()) {
+        transaction.update(cashRef, { balance: newBalance });
+      } else {
+        transaction.set(cashRef, { balance: newBalance });
+      }
 
       // D. Record Cash Ledger Mutation
       const mutId = "mut_" + generateId();
@@ -405,7 +409,11 @@ export async function addTransaction(tx: Omit<Transaction, "id">) {
 
       // C. Update Cash Balance (Uang Keluar)
       const newBalance = currentBalance - tx.totalPrice;
-      transaction.update(cashRef, { balance: newBalance });
+      if (cashSnap.exists()) {
+        transaction.update(cashRef, { balance: newBalance });
+      } else {
+        transaction.set(cashRef, { balance: newBalance });
+      }
 
       // D. Record Cash Ledger Mutation
       const mutId = "mut_" + generateId();
@@ -463,7 +471,11 @@ export async function addSalary(salary: Omit<Salary, "id">) {
 
     // 2. Deduct Cash
     const newBalance = currentBalance - salary.amount;
-    transaction.update(cashRef, { balance: newBalance });
+    if (cashSnap.exists()) {
+      transaction.update(cashRef, { balance: newBalance });
+    } else {
+      transaction.set(cashRef, { balance: newBalance });
+    }
 
     // 3. Record Cash Mutation
     const mutId = "mut_" + generateId();
@@ -549,7 +561,11 @@ export async function addManualCashMutation(type: "in" | "out", amount: number, 
     }
 
     const newBalance = type === "in" ? currentBalance + amount : currentBalance - amount;
-    transaction.update(cashRef, { balance: newBalance });
+    if (cashSnap.exists()) {
+      transaction.update(cashRef, { balance: newBalance });
+    } else {
+      transaction.set(cashRef, { balance: newBalance });
+    }
 
     transaction.set(doc(db, "cash_ledger", id), {
       id,

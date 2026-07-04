@@ -39,6 +39,8 @@ export interface Transaction {
   bottleSize?: string; // "None" or size (e.g. "30ml", "50ml", "100ml")
   bottleCount?: number; // Quantity of bottles
   totalPrice: number;
+  discountType?: "none" | "free_bottle" | "nominal";
+  discountNominal?: number;
   description: string;
   operatorEmail: string;
 }

@@ -126,6 +126,8 @@ export default function App() {
   const [saleBottleCount, setSaleBottleCount] = useState<number>(1);
   const [saleTotalPrice, setSaleTotalPrice] = useState<number>(0);
   const [saleDescription, setSaleDescription] = useState("");
+  const [saleDiscountType, setSaleDiscountType] = useState<"none" | "free_bottle" | "nominal">("none");
+  const [saleDiscountNominal, setSaleDiscountNominal] = useState<number>(0);
 
   // Purchase stock state
   const [purchaseCategory, setPurchaseCategory] = useState<"bibit" | "alkohol" | "botol" | "other">("bibit");
@@ -186,6 +188,15 @@ export default function App() {
           seedInitialDataIfEmpty().then(() => {
             showToast("Koneksi cloud terhubung. Database tersinkronisasi.", "info");
           });
+        }
+        
+        // Optimistic bypass of loading screen if user role is cached locally
+        if (typeof window !== "undefined") {
+          const cachedRole = localStorage.getItem("bastika_user_role");
+          if (cachedRole) {
+            setUserRole(cachedRole as UserRole);
+            setAuthLoading(false);
+          }
         }
       } else {
         setCurrentUser(null);
@@ -334,10 +345,21 @@ export default function App() {
       }
     }
 
+    // Apply "Free Bottle" discount by waiving the bottle fee
+    if (saleDiscountType === "free_bottle") {
+      bottleFee = 0;
+    }
+
     const baseCost = (saleVolume * pricePerMl) + bottleFee;
-    const computedTotal = baseCost * saleBottleCount;
+    let computedTotal = baseCost * saleBottleCount;
+
+    // Apply custom nominal discount
+    if (saleDiscountType === "nominal") {
+      computedTotal = Math.max(0, computedTotal - saleDiscountNominal);
+    }
+
     setSaleTotalPrice(computedTotal);
-  }, [saleScent, saleVolume, saleBottleSize, saleBottleCount, prices, bottleSizes]);
+  }, [saleScent, saleVolume, saleBottleSize, saleBottleCount, prices, bottleSizes, saleDiscountType, saleDiscountNominal]);
 
   // Currency Formatter helper (Indonesian Rupiah)
   const formatRupiah = (value: number) => {
@@ -498,6 +520,16 @@ export default function App() {
 
     const opEmail = currentUser?.email || customEmail || "client_operator@gmail.com";
 
+    let computedDiscount = 0;
+    if (saleDiscountType === "nominal") {
+      computedDiscount = saleDiscountNominal;
+    } else if (saleDiscountType === "free_bottle") {
+      const matchedBottle = bottleSizes.find(b => b.size === saleBottleSize);
+      if (matchedBottle) {
+        computedDiscount = matchedBottle.price * saleBottleCount;
+      }
+    }
+
     try {
       await addTransaction({
         type: "sale",
@@ -508,7 +540,9 @@ export default function App() {
         bottleSize: saleBottleSize,
         bottleCount: saleBottleCount,
         totalPrice: saleTotalPrice,
-        description: saleDescription || `Penjualan bibit ${saleScent} (${saleVolume}ml) + Botol ${saleBottleSize}`,
+        discountType: saleDiscountType,
+        discountNominal: computedDiscount,
+        description: saleDescription || `Penjualan bibit ${saleScent} (${saleVolume}ml) + Botol ${saleBottleSize}${saleDiscountType !== 'none' ? ` (Diskon: ${saleDiscountType === 'free_bottle' ? 'Gratis Botol' : formatRupiah(computedDiscount)})` : ''}`,
         operatorEmail: opEmail
       });
       
@@ -519,6 +553,8 @@ export default function App() {
       setSaleBottleSize("30ml");
       setSaleBottleCount(1);
       setSaleDescription("");
+      setSaleDiscountType("none");
+      setSaleDiscountNominal(0);
     } catch (err: any) {
       showToast(err.message || "Gagal mencatat penjualan", "error");
     }
@@ -1812,6 +1848,72 @@ export default function App() {
                       onChange={(e) => setSaleDescription(e.target.value)}
                       className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white"
                     />
+                  </div>
+
+                  {/* Discount Section */}
+                  <div className="bg-emerald-50/40 border border-emerald-100 rounded-2xl p-4 space-y-3">
+                    <label className="block text-[11px] font-bold text-emerald-800 uppercase tracking-wider">
+                      Promo & Diskon Transaksi (Opsional)
+                    </label>
+                    <div className="grid grid-cols-3 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSaleDiscountType("none");
+                          setSaleDiscountNominal(0);
+                        }}
+                        className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all text-center cursor-pointer ${
+                          saleDiscountType === "none"
+                            ? "bg-emerald-600 text-white border-emerald-600"
+                            : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                        }`}
+                      >
+                        Tanpa Diskon
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSaleDiscountType("free_bottle");
+                          setSaleDiscountNominal(0);
+                        }}
+                        disabled={saleBottleSize === "None"}
+                        className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all text-center cursor-pointer ${
+                          saleBottleSize === "None"
+                            ? "opacity-50 cursor-not-allowed bg-slate-100 text-slate-400 border-slate-200"
+                            : saleDiscountType === "free_bottle"
+                            ? "bg-emerald-600 text-white border-emerald-600"
+                            : "bg-white text-emerald-700 border-emerald-200 hover:bg-emerald-50"
+                        }`}
+                        title={saleBottleSize === "None" ? "Hanya tersedia jika menggunakan kemasan botol" : ""}
+                      >
+                        Gratis Botol
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSaleDiscountType("nominal")}
+                        className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all text-center cursor-pointer ${
+                          saleDiscountType === "nominal"
+                            ? "bg-emerald-600 text-white border-emerald-600"
+                            : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                        }`}
+                      >
+                        Potongan (Rp)
+                      </button>
+                    </div>
+
+                    {saleDiscountType === "nominal" && (
+                      <div className="animate-in fade-in slide-in-from-top-1 duration-200">
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Nominal Potongan Harga (Rupiah)</label>
+                        <input
+                          id="sales-discount-input"
+                          type="number"
+                          placeholder="Contoh: 10000"
+                          value={saleDiscountNominal || ""}
+                          onChange={(e) => setSaleDiscountNominal(Math.max(0, Number(e.target.value)))}
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800"
+                        />
+                      </div>
+                    )}
                   </div>
 
                   {/* Calculations & Total Display Box */}

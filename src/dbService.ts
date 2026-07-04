@@ -700,3 +700,43 @@ export async function addBottleSize(size: string, price: number) {
 export async function deleteBottleSize(id: string) {
   await deleteDoc(doc(db, "bottle_sizes", id));
 }
+
+// Update or set initial capital
+export async function updateInitialCapital(amount: number) {
+  await runTransaction(db, async (transaction) => {
+    const cashRef = doc(db, "config", "cash");
+    const cashSnap = await transaction.get(cashRef);
+    let currentBalance = 0;
+    if (cashSnap.exists()) {
+      currentBalance = cashSnap.data().balance;
+    }
+
+    const initMutRef = doc(db, "cash_ledger", "mut_init");
+    const initMutSnap = await transaction.get(initMutRef);
+    let oldAmount = 0;
+    if (initMutSnap.exists()) {
+      oldAmount = initMutSnap.data().amount;
+    }
+
+    const difference = amount - oldAmount;
+    const newBalance = currentBalance + difference;
+
+    if (cashSnap.exists()) {
+      transaction.update(cashRef, { balance: newBalance });
+    } else {
+      transaction.set(cashRef, { balance: newBalance });
+    }
+
+    transaction.set(initMutRef, {
+      id: "mut_init",
+      date: initMutSnap.exists() ? initMutSnap.data().date : new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
+      type: "in",
+      amount: amount,
+      balanceBefore: 0,
+      balanceAfter: amount,
+      description: "Modal awal usaha BASTIKA PARFUM",
+      referenceId: "modal_awal"
+    });
+  });
+}
+

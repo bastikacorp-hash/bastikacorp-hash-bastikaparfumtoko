@@ -36,7 +36,8 @@ import {
   deleteClientUser,
   subscribeToBottleSizes,
   addBottleSize,
-  deleteBottleSize
+  deleteBottleSize,
+  updateInitialCapital
 } from "./dbService";
 import { 
   Shelf as ShelfType, 
@@ -75,7 +76,11 @@ import {
   UserPlus, 
   Edit3,
   Sparkles,
-  Info
+  Info,
+  Coins,
+  Save,
+  FileSpreadsheet,
+  X
 } from "lucide-react";
 
 export default function App() {
@@ -153,6 +158,12 @@ export default function App() {
   const [manualMutationType, setManualMutationType] = useState<"in" | "out">("in");
   const [manualMutationAmount, setManualMutationAmount] = useState<number>(0);
   const [manualMutationDesc, setManualMutationDesc] = useState("");
+
+  // Filter & Excel Export state variables
+  const [filterStartDate, setFilterStartDate] = useState<string>("");
+  const [filterEndDate, setFilterEndDate] = useState<string>("");
+  const [filterMonth, setFilterMonth] = useState<string>(""); // Format: "YYYY-MM"
+  const [inputInitialCapital, setInputInitialCapital] = useState<number>(15000000);
 
   // Notification Toast state
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
@@ -330,6 +341,14 @@ export default function App() {
       seedInitialDataIfEmpty();
     }
   }, [customEmail]);
+
+  // Sync initial capital input state with the actual ledger's mut_init mutation
+  useEffect(() => {
+    const initMut = cashLedger.find((m) => m.id === "mut_init");
+    if (initMut) {
+      setInputInitialCapital(initMut.amount);
+    }
+  }, [cashLedger]);
 
   // Price Calculation Logic for Sales
   useEffect(() => {
@@ -789,18 +808,159 @@ export default function App() {
     return "alkohol".includes(term);
   });
 
-  // ACCOUNTING CALCULATIONS
-  const totalSales = transactions
+  // Helper for date & month range filter
+  const isWithinFilter = (dateStr: string) => {
+    if (!dateStr) return false;
+    const itemDateOnly = dateStr.substring(0, 10); // "YYYY-MM-DD"
+    const itemMonthOnly = dateStr.substring(0, 7); // "YYYY-MM"
+    
+    if (filterMonth && itemMonthOnly !== filterMonth) {
+      return false;
+    }
+    if (filterStartDate && itemDateOnly < filterStartDate) {
+      return false;
+    }
+    if (filterEndDate && itemDateOnly > filterEndDate) {
+      return false;
+    }
+    return true;
+  };
+
+  // Filtered lists for reporting
+  const filteredTransactions = transactions.filter(t => isWithinFilter(t.date));
+  const filteredSalaries = salaries.filter(s => isWithinFilter(s.datePaid));
+  const filteredCashLedger = cashLedger.filter(m => isWithinFilter(m.date));
+
+  // ACCOUNTING CALCULATIONS (using filtered data)
+  const totalSales = filteredTransactions
     .filter(t => t.type === "sale")
     .reduce((sum, t) => sum + t.totalPrice, 0);
 
-  const totalPurchases = transactions
+  const totalPurchases = filteredTransactions
     .filter(t => t.type === "purchase")
     .reduce((sum, t) => sum + t.totalPrice, 0);
 
-  const totalSalaries = salaries.reduce((sum, s) => sum + s.amount, 0);
+  const totalSalaries = filteredSalaries.reduce((sum, s) => sum + s.amount, 0);
 
   const netProfit = totalSales - totalPurchases - totalSalaries;
+
+  // EXCEL EXPORT ENGINE (HTML-Spreadsheet compatible format)
+  const exportToExcel = (rows: any[][], fileName: string) => {
+    let xml = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">`;
+    xml += `<head>
+      <meta charset="utf-8">
+      <!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>Laporan</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
+      <style>
+        table { border-collapse: collapse; font-family: Arial, sans-serif; }
+        th { background-color: #059669; color: white; font-weight: bold; border: 1px solid #cbd5e1; padding: 8px; text-align: left; }
+        td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; color: #1e293b; }
+        .header-row { font-weight: bold; background-color: #f1f5f9; color: #0f172a; }
+        .title { font-size: 16px; font-weight: bold; color: #059669; }
+        .meta { font-size: 11px; color: #64748b; font-style: italic; }
+      </style>
+    </head>`;
+    xml += `<body>`;
+    
+    // Header title
+    xml += `<table>`;
+    rows.forEach((row, rowIndex) => {
+      xml += `<tr>`;
+      row.forEach((cell) => {
+        const isHeader = cell === "Tanggal" || cell === "Tanggal Mutasi" || cell === "Tipe" || cell === "Tipe Transaksi" || cell === "NOMINAL" || cell === "KATEGORI" || cell === "Tanggal Mutasi";
+        const styleClass = isHeader ? 'class="header-row"' : '';
+        xml += `<td ${styleClass}>${cell === null || cell === undefined ? "" : cell}</td>`;
+      });
+      xml += `</tr>`;
+    });
+    xml += `</table></body></html>`;
+
+    const blob = new Blob([xml], { type: "application/vnd.ms-excel" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${fileName}_${new Date().toISOString().substring(0, 10)}.xls`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportLabaRugiToExcel = () => {
+    const headers = ["Tanggal", "Tipe Transaksi", "Deskripsi / Aroma", "Kapasitas (ml)", "Kemasan", "Jumlah", "Total Harga (Rp)", "Operator"];
+    
+    const dataRows = [
+      ["LAPORAN RINGKASAN LABA RUGI - BASTIKA PARFUM"],
+      [`Periode: ${filterMonth ? `Bulan ${filterMonth}` : "Semua Periode"}${filterStartDate ? ` | Mulai: ${filterStartDate}` : ""}${filterEndDate ? ` | Selesai: ${filterEndDate}` : ""}`],
+      ["Dibuat Tanggal:", new Date().toLocaleString("id-ID")],
+      [""],
+      ["KATEGORI LAPORAN", "NOMINAL RUPIAH"],
+      ["Total Omset Penjualan (Debit)", totalSales],
+      ["Total Belanja Stok (Kredit)", totalPurchases],
+      ["Total Beban Gaji Karyawan (Kredit)", totalSalaries],
+      ["LABA BERSIH", netProfit],
+      [""],
+      ["RINCIAN TRANSAKSI PERIODE INI"],
+      headers
+    ];
+
+    filteredTransactions.forEach(t => {
+      dataRows.push([
+        new Date(t.date).toLocaleString("id-ID"),
+        t.type === "sale" ? "PENJUALAN" : "BELANJA",
+        t.scentName || t.category || "-",
+        t.volume ? `${t.volume}ml` : "-",
+        t.bottleSize || "-",
+        t.bottleCount || t.quantity || "-",
+        t.totalPrice,
+        t.operatorEmail
+      ]);
+    });
+
+    exportToExcel(dataRows, "Laporan_Laba_Rugi_Bastika_Parfum");
+    showToast("Laporan Laba Rugi berhasil diexport ke Excel!");
+  };
+
+  const exportBukuKasToExcel = () => {
+    const headers = ["Tanggal Mutasi", "Deskripsi Mutasi", "Tipe", "Nominal (Rp)", "Saldo Kas Akhir (Rp)"];
+    
+    const dataRows = [
+      ["LAPORAN MUTASI BUKU KAS BESAR - BASTIKA PARFUM"],
+      [`Periode: ${filterMonth ? `Bulan ${filterMonth}` : "Semua Periode"}${filterStartDate ? ` | Mulai: ${filterStartDate}` : ""}${filterEndDate ? ` | Selesai: ${filterEndDate}` : ""}`],
+      ["Dibuat Tanggal:", new Date().toLocaleString("id-ID")],
+      [""],
+      ["Arus Kas Masuk / Omset (Debit)", totalSales],
+      ["Belanja Stok / Pengeluaran (Kredit)", totalPurchases],
+      ["Beban Gaji Karyawan (Kredit)", totalSalaries],
+      ["Sisa Saldo Kas Riil Terakhir", cashBalance],
+      [""],
+      headers
+    ];
+
+    filteredCashLedger.forEach(m => {
+      dataRows.push([
+        new Date(m.date).toLocaleString("id-ID"),
+        m.description,
+        m.type === "in" ? "DEBIT" : "KREDIT",
+        m.amount,
+        m.balanceAfter
+      ]);
+    });
+
+    exportToExcel(dataRows, "Buku_Kas_Besar_Bastika_Parfum");
+    showToast("Buku Kas Besar berhasil diexport ke Excel!");
+  };
+
+  const handleInitialCapitalSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (inputInitialCapital <= 0) {
+      showToast("Nominal modal awal harus di atas Rp 0!", "error");
+      return;
+    }
+    try {
+      await updateInitialCapital(inputInitialCapital);
+      showToast(`Modal awal berhasil diperbarui menjadi ${formatRupiah(inputInitialCapital)}!`, "success");
+    } catch (err: any) {
+      showToast(err.message || "Gagal memperbarui modal awal", "error");
+    }
+  };
 
   // Render Login screen if not authenticated
   if (authLoading) {
@@ -1139,6 +1299,75 @@ export default function App() {
           {activeTab === "dashboard" && userRole === "admin" && (
             <div className="space-y-6">
               
+              {/* FILTER PERIODE & EXCEL EXPORT */}
+              <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  <div className="flex items-center gap-2.5">
+                    <div className="h-9 w-9 bg-emerald-50 rounded-lg flex items-center justify-center">
+                      <Filter className="h-5 w-5 text-emerald-600" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wide">Filter Laporan & Laba Rugi</h4>
+                      <p className="text-[10px] text-slate-500">Sesuaikan rentang waktu analisis laba usaha</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 flex-1 max-w-2xl">
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Tanggal Mulai</label>
+                      <input
+                        type="date"
+                        value={filterStartDate}
+                        onChange={(e) => setFilterStartDate(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-700"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Tanggal Selesai</label>
+                      <input
+                        type="date"
+                        value={filterEndDate}
+                        onChange={(e) => setFilterEndDate(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-700"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Pilih Bulan & Tahun</label>
+                      <input
+                        type="month"
+                        value={filterMonth}
+                        onChange={(e) => setFilterMonth(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-700"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex sm:items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setFilterStartDate("");
+                        setFilterEndDate("");
+                        setFilterMonth("");
+                        showToast("Filter berhasil dibersihkan.");
+                      }}
+                      className="bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 font-bold px-3 py-2 rounded-lg text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                      title="Reset Filter"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                      Reset
+                    </button>
+
+                    <button
+                      onClick={exportLabaRugiToExcel}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded-lg text-xs transition-colors shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-100" />
+                      Export Excel
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               {/* Financial Metrics Cards */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
                 
@@ -2160,94 +2389,200 @@ export default function App() {
           {activeTab === "accounting" && userRole === "admin" && (
             <div className="space-y-6">
               
-              {/* Accounting summary metrics */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Arus Kas Masuk (Debit)</span>
-                  <p className="text-xl font-bold font-mono text-emerald-600 mt-1">{formatRupiah(totalSales)}</p>
-                </div>
-                <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Belanja Stok (Kredit)</span>
-                  <p className="text-xl font-bold font-mono text-rose-600 mt-1">{formatRupiah(totalPurchases)}</p>
-                </div>
-                <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Beban Gaji (Kredit)</span>
-                  <p className="text-xl font-bold font-mono text-amber-600 mt-1">{formatRupiah(totalSalaries)}</p>
-                </div>
-                <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Sisa Saldo Kas Riil</span>
-                  <p className="text-xl font-bold font-mono text-slate-900 mt-1">{formatRupiah(cashBalance)}</p>
+              {/* FILTER PERIODE & EXCEL EXPORT */}
+              <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  <div className="flex items-center gap-2.5">
+                    <div className="h-9 w-9 bg-emerald-50 rounded-lg flex items-center justify-center">
+                      <Filter className="h-5 w-5 text-emerald-600" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wide">Filter Laporan Kas Besar</h4>
+                      <p className="text-[10px] text-slate-500">Sesuaikan rentang waktu arus kas masuk dan keluar</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 flex-1 max-w-2xl">
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Tanggal Mulai</label>
+                      <input
+                        type="date"
+                        value={filterStartDate}
+                        onChange={(e) => setFilterStartDate(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-700"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Tanggal Selesai</label>
+                      <input
+                        type="date"
+                        value={filterEndDate}
+                        onChange={(e) => setFilterEndDate(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-700"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Pilih Bulan & Tahun</label>
+                      <input
+                        type="month"
+                        value={filterMonth}
+                        onChange={(e) => setFilterMonth(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-700"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex sm:items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setFilterStartDate("");
+                        setFilterEndDate("");
+                        setFilterMonth("");
+                        showToast("Filter berhasil dibersihkan.");
+                      }}
+                      className="bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 font-bold px-3 py-2 rounded-lg text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                      title="Reset Filter"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                      Reset
+                    </button>
+
+                    <button
+                      onClick={exportBukuKasToExcel}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded-lg text-xs transition-colors shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-100" />
+                      Export Excel
+                    </button>
+                  </div>
                 </div>
               </div>
 
-              {/* Master Gaji Karyawan */}
+              {/* Accounting summary metrics */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm min-w-0">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block truncate">Arus Kas Masuk (Debit)</span>
+                  <p className="text-base sm:text-lg xl:text-xl font-bold font-mono text-emerald-600 mt-1 truncate" title={formatRupiah(totalSales)}>{formatRupiah(totalSales)}</p>
+                </div>
+                <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm min-w-0">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block truncate">Belanja Stok (Kredit)</span>
+                  <p className="text-base sm:text-lg xl:text-xl font-bold font-mono text-rose-600 mt-1 truncate" title={formatRupiah(totalPurchases)}>{formatRupiah(totalPurchases)}</p>
+                </div>
+                <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm min-w-0">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block truncate">Beban Gaji (Kredit)</span>
+                  <p className="text-base sm:text-lg xl:text-xl font-bold font-mono text-amber-600 mt-1 truncate" title={formatRupiah(totalSalaries)}>{formatRupiah(totalSalaries)}</p>
+                </div>
+                <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm min-w-0">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block truncate">Sisa Saldo Kas Riil</span>
+                  <p className="text-base sm:text-lg xl:text-xl font-bold font-mono text-slate-900 mt-1 truncate" title={formatRupiah(cashBalance)}>{formatRupiah(cashBalance)}</p>
+                </div>
+              </div>
+
+              {/* Master Gaji & Modal Awal */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 
-                {/* Pay Salary form */}
-                <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm h-fit">
-                  <h3 className="font-bold text-sm text-slate-900 mb-4 flex items-center gap-2">
-                    <UserPlus className="h-4.5 w-4.5 text-emerald-600" />
-                    Bayar Gaji Karyawan (Pengurang Laba)
-                  </h3>
+                {/* Column 1: Forms */}
+                <div className="space-y-6 lg:col-span-1">
+                  
+                  {/* EDIT/INPUT MODAL AWAL */}
+                  <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
+                    <h3 className="font-bold text-sm text-slate-900 mb-3 flex items-center gap-2">
+                      <Coins className="h-4.5 w-4.5 text-emerald-600" />
+                      Atur Modal Awal Toko
+                    </h3>
+                    <p className="text-[10px] text-slate-500 mb-4 leading-relaxed">
+                      Edit saldo modal awal Kas Besar yang diinput saat inisialisasi toko. Perubahan akan menyesuaikan sisa saldo berjalan secara otomatis.
+                    </p>
+                    <form onSubmit={handleInitialCapitalSubmit} className="space-y-3">
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Nominal Modal Awal (Rp)</label>
+                        <div className="relative">
+                          <span className="absolute left-3.5 top-2.5 text-xs font-bold text-slate-400">Rp</span>
+                          <input
+                            type="number"
+                            placeholder="Contoh: 15000000"
+                            value={inputInitialCapital || ""}
+                            onChange={(e) => setInputInitialCapital(Number(e.target.value))}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-4 py-2.5 text-xs font-mono font-bold focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
+                          />
+                        </div>
+                      </div>
+                      <button
+                        type="submit"
+                        className="w-full bg-slate-950 hover:bg-slate-900 text-white font-extrabold py-2.5 px-4 rounded-xl text-xs transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Save className="h-3.5 w-3.5" />
+                        SIMPAN PERUBAHAN MODAL AWAL
+                      </button>
+                    </form>
+                  </div>
 
-                  <form onSubmit={handleSalarySubmit} className="space-y-4">
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Nama Lengkap Karyawan</label>
-                      <input
-                        id="salary-employee-input"
-                        type="text"
-                        placeholder="Contoh: Budi Cahyono, Siti Aminah"
-                        value={salEmployee}
-                        onChange={(e) => setSalEmployee(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white"
-                      />
-                    </div>
+                  {/* Pay Salary form */}
+                  <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
+                    <h3 className="font-bold text-sm text-slate-900 mb-4 flex items-center gap-2">
+                      <UserPlus className="h-4.5 w-4.5 text-emerald-600" />
+                      Bayar Gaji Karyawan
+                    </h3>
 
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Bulan Gaji</label>
-                      <input
-                        id="salary-month-input"
-                        type="text"
-                        placeholder="Contoh: Juli 2026, Agustus 2026"
-                        value={salMonth}
-                        onChange={(e) => setSalMonth(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white"
-                      />
-                    </div>
+                    <form onSubmit={handleSalarySubmit} className="space-y-4">
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Nama Lengkap Karyawan</label>
+                        <input
+                          id="salary-employee-input"
+                          type="text"
+                          placeholder="Contoh: Budi Cahyono, Siti Aminah"
+                          value={salEmployee}
+                          onChange={(e) => setSalEmployee(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white"
+                        />
+                      </div>
 
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Nominal Gaji (Rp)</label>
-                      <input
-                        id="salary-amount-input"
-                        type="number"
-                        placeholder="Contoh: 1500000"
-                        value={salAmount || ""}
-                        onChange={(e) => setSalAmount(Number(e.target.value))}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white"
-                      />
-                    </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Bulan Gaji</label>
+                        <input
+                          id="salary-month-input"
+                          type="text"
+                          placeholder="Contoh: Juli 2026, Agustus 2026"
+                          value={salMonth}
+                          onChange={(e) => setSalMonth(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white"
+                        />
+                      </div>
 
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Catatan Tambahan (Opsional)</label>
-                      <input
-                        id="salary-notes-input"
-                        type="text"
-                        placeholder="Gaji pokok + bonus kehadiran..."
-                        value={salNotes}
-                        onChange={(e) => setSalNotes(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white"
-                      />
-                    </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Nominal Gaji (Rp)</label>
+                        <input
+                          id="salary-amount-input"
+                          type="number"
+                          placeholder="Contoh: 1500000"
+                          value={salAmount || ""}
+                          onChange={(e) => setSalAmount(Number(e.target.value))}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white"
+                        />
+                      </div>
 
-                    <button
-                      id="save-salary-btn"
-                      type="submit"
-                      className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
-                    >
-                      <Plus className="h-4 w-4" />
-                      Proses Pembayaran Gaji
-                    </button>
-                  </form>
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Catatan Tambahan (Opsional)</label>
+                        <input
+                          id="salary-notes-input"
+                          type="text"
+                          placeholder="Gaji pokok + bonus kehadiran..."
+                          value={salNotes}
+                          onChange={(e) => setSalNotes(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white"
+                        />
+                      </div>
+
+                      <button
+                        id="save-salary-btn"
+                        type="submit"
+                        className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        <Plus className="h-4 w-4" />
+                        Proses Pembayaran Gaji
+                      </button>
+                    </form>
+                  </div>
                 </div>
 
                 {/* Salaries Paid Master Table */}
@@ -2255,7 +2590,7 @@ export default function App() {
                   <h3 className="font-bold text-sm text-slate-900 mb-1">Master Riwayat Gaji Terbayar</h3>
                   <p className="text-[11px] text-slate-500 mb-4">Daftar beban gaji karyawan yang otomatis mengurangi perhitungan laba bersih toko.</p>
 
-                  <div className="overflow-x-auto max-h-96">
+                  <div className="overflow-x-auto max-h-[500px]">
                     <table className="w-full text-left text-xs">
                       <thead>
                         <tr className="bg-slate-50 border-b border-slate-100 text-slate-500 uppercase tracking-wider text-[10px] font-bold">
@@ -2266,7 +2601,7 @@ export default function App() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {salaries.map((s) => (
+                        {filteredSalaries.map((s) => (
                           <tr key={s.id} className="hover:bg-slate-50/50 transition-colors">
                             <td className="py-3 px-4 font-bold text-slate-800">{s.employeeName}</td>
                             <td className="py-3 px-4 text-slate-500">{s.month}</td>
@@ -2282,10 +2617,10 @@ export default function App() {
                             </td>
                           </tr>
                         ))}
-                        {salaries.length === 0 && (
+                        {filteredSalaries.length === 0 && (
                           <tr>
                             <td colSpan={4} className="py-8 text-center text-slate-400 italic">
-                              Belum ada catatan pembayaran gaji karyawan.
+                              Tidak ada catatan pembayaran gaji karyawan pada periode filter ini.
                             </td>
                           </tr>
                         )}
@@ -2301,7 +2636,7 @@ export default function App() {
                 <h3 className="font-bold text-sm text-slate-900 mb-1">Mutasi Buku Kas Besar</h3>
                 <p className="text-[11px] text-slate-500 mb-4">Rincian mutasi uang masuk dan keluar secara kronologis untuk audit keuangan profesional.</p>
 
-                <div className="overflow-x-auto max-h-96">
+                <div className="overflow-x-auto max-h-[500px]">
                   <table className="w-full text-left text-xs">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-100 text-slate-500 uppercase tracking-wider text-[10px] font-bold">
@@ -2313,7 +2648,7 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {cashLedger.map((m) => (
+                      {filteredCashLedger.map((m) => (
                         <tr key={m.id} className="hover:bg-slate-50/50 transition-colors">
                           <td className="py-3 px-4 text-slate-500 font-mono">
                             {new Date(m.date).toLocaleString("id-ID")}
@@ -2334,10 +2669,10 @@ export default function App() {
                           <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">{formatRupiah(m.balanceAfter)}</td>
                         </tr>
                       ))}
-                      {cashLedger.length === 0 && (
+                      {filteredCashLedger.length === 0 && (
                         <tr>
                           <td colSpan={5} className="py-8 text-center text-slate-400 italic">
-                            Belum ada mutasi buku kas besar.
+                            Tidak ada mutasi buku kas besar pada periode filter ini.
                           </td>
                         </tr>
                       )}

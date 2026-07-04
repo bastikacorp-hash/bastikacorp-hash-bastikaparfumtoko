@@ -1,0 +1,82 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getUserEmail() {
+      return request.auth.token.email;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        getUserEmail() == 'bastikacorp@gmail.com' ||
+        get(/databases/$(database)/documents/users/$(getUserEmail())).data.role == 'admin'
+      );
+    }
+
+    function isClient() {
+      return isAuthenticated() && (
+        get(/databases/$(database)/documents/users/$(getUserEmail())).data.role == 'client'
+      );
+    }
+
+    function isWhitelisted() {
+      return isAdmin() || isClient();
+    }
+
+    // Whitelist / Users Collection
+    match /users/{email} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Shelves / Rak
+    match /shelves/{shelfId} {
+      allow read: if isWhitelisted();
+      allow write: if isAdmin();
+    }
+
+    // Scent Prices / Harga Master
+    match /prices/{priceId} {
+      allow read: if isWhitelisted();
+      allow write: if isAdmin();
+    }
+
+    // Stocks / Stok Master
+    match /stocks/{stockId} {
+      allow read: if isWhitelisted();
+      // Admin can update any stock.
+      // Client can only update essence or bottle stock quantities (for sales deductions).
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        isClient() && 
+        (stockId.startsWith('essence_') || stockId.startsWith('bottle_'))
+      );
+    }
+
+    // Transactions / Transaksi
+    match /transactions/{txId} {
+      allow read: if isAdmin();
+      // Client can only record SALES, not purchases or modifications
+      allow create: if isAdmin() || (
+        isClient() && 
+        request.resource.data.type == 'sale'
+      );
+      allow update, delete: if isAdmin();
+    }
+
+    // Salaries / Gaji Karyawan
+    match /salaries/{salaryId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Cash Ledger / Kas Besar
+    match /cash_ledger/{ledgerId} {
+      allow read, write: if isAdmin();
+    }
+  }
+}

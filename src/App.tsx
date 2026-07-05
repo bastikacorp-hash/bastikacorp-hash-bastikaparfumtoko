@@ -4293,27 +4293,41 @@ export default function App() {
                     <span>JUMLAH</span>
                   </div>
                   
-                  {/* Scent Row */}
-                  <div className="text-[8px] space-y-0.5">
-                    <div className="flex justify-between font-bold">
-                      <span>Bibit {printTx.scentName} ({printTx.volumeMl}ml)</span>
-                      <span>
-                        Rp {((printTx.volumeMl || 0) * (prices.find(p => p.scentName === printTx.scentName)?.pricePerMl || 3500) * (printTx.bottleCount || 1)).toLocaleString("id-ID")}
-                      </span>
+                  {printTx.scentName === "Klaim Promo Potongan" ? (
+                    <div className="text-[8px] space-y-0.5">
+                      <div className="flex justify-between font-bold">
+                        <span>Klaim Promo Diskon Pelanggan</span>
+                        <span>Rp {printTx.discountNominal.toLocaleString("id-ID")}</span>
+                      </div>
+                      <div className="flex justify-between text-[7px] text-slate-500 pl-2">
+                        <span>Penukaran Akumulasi Loyalitas</span>
+                      </div>
                     </div>
-                    <div className="flex justify-between text-[7px] text-slate-500 pl-2">
-                      <span>{printTx.volumeMl} ml x Rp {(prices.find(p => p.scentName === printTx.scentName)?.pricePerMl || 3500).toLocaleString("id-ID")} /ml</span>
-                    </div>
-                  </div>
+                  ) : (
+                    <>
+                      {/* Scent Row */}
+                      <div className="text-[8px] space-y-0.5">
+                        <div className="flex justify-between font-bold">
+                          <span>Bibit {printTx.scentName} ({printTx.volumeMl}ml)</span>
+                          <span>
+                            Rp {((printTx.volumeMl || 0) * (prices.find(p => p.scentName === printTx.scentName)?.pricePerMl || 3500) * (printTx.bottleCount || 1)).toLocaleString("id-ID")}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-[7px] text-slate-500 pl-2">
+                          <span>{printTx.volumeMl} ml x Rp {(prices.find(p => p.scentName === printTx.scentName)?.pricePerMl || 3500).toLocaleString("id-ID")} /ml</span>
+                        </div>
+                      </div>
 
-                  {/* Bottle Row if any */}
-                  {printTx.bottleSize && printTx.bottleSize !== "None" && (
-                    <div className="text-[8px] pt-1 flex justify-between">
-                      <span>Botol {printTx.bottleSize} ({printTx.bottleCount} pcs)</span>
-                      <span>
-                        Rp {((bottleSizes.find(b => b.size === printTx.bottleSize)?.price || 0) * (printTx.bottleCount || 1)).toLocaleString("id-ID")}
-                      </span>
-                    </div>
+                      {/* Bottle Row if any */}
+                      {printTx.bottleSize && printTx.bottleSize !== "None" && (
+                        <div className="text-[8px] pt-1 flex justify-between">
+                          <span>Botol {printTx.bottleSize} ({printTx.bottleCount} pcs)</span>
+                          <span>
+                            Rp {((bottleSizes.find(b => b.size === printTx.bottleSize)?.price || 0) * (printTx.bottleCount || 1)).toLocaleString("id-ID")}
+                          </span>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
 
@@ -4321,9 +4335,10 @@ export default function App() {
                   <div className="flex justify-between text-[8px]">
                     <span>SUBTOTAL</span>
                     <span>
-                      Rp {(
-                        ((printTx.volumeMl || 0) * (prices.find(p => p.scentName === printTx.scentName)?.pricePerMl || 3500) * (printTx.bottleCount || 1)) +
-                        ((printTx.bottleSize && printTx.bottleSize !== "None" ? (bottleSizes.find(b => b.size === printTx.bottleSize)?.price || 0) : 0) * (printTx.bottleCount || 1))
+                      Rp {(printTx.scentName === "Klaim Promo Potongan"
+                        ? printTx.discountNominal
+                        : (((printTx.volumeMl || 0) * (prices.find(p => p.scentName === printTx.scentName)?.pricePerMl || 3500) * (printTx.bottleCount || 1)) +
+                           ((printTx.bottleSize && printTx.bottleSize !== "None" ? (bottleSizes.find(b => b.size === printTx.bottleSize)?.price || 0) : 0) * (printTx.bottleCount || 1)))
                       ).toLocaleString("id-ID")}
                     </span>
                   </div>
@@ -4335,7 +4350,7 @@ export default function App() {
                   ) : null}
                   <div className="flex justify-between text-[9px] font-black border-t border-dotted border-slate-400 pt-1">
                     <span>TOTAL BAYAR</span>
-                    <span>Rp {printTx.totalPrice.toLocaleString("id-ID")}</span>
+                    <span>Rp {(printTx.scentName === "Klaim Promo Potongan" ? 0 : printTx.totalPrice).toLocaleString("id-ID")}</span>
                   </div>
                 </div>
 
@@ -4427,25 +4442,39 @@ export default function App() {
                         <span>JUMLAH</span>
                       </div>
                       
-                      <div className="text-[7px] text-slate-800 space-y-0.5">
-                        <div className="flex justify-between font-semibold">
-                          <span>Bibit {printTx.scentName} ({printTx.volumeMl}ml)</span>
-                          <span>
-                            Rp {((printTx.volumeMl || 0) * (prices.find(p => p.scentName === printTx.scentName)?.pricePerMl || 3500) * (printTx.bottleCount || 1)).toLocaleString("id-ID")}
-                          </span>
+                      {printTx.scentName === "Klaim Promo Potongan" ? (
+                        <div className="text-[7px] text-slate-800 space-y-0.5">
+                          <div className="flex justify-between font-semibold">
+                            <span>Klaim Promo Diskon Pelanggan</span>
+                            <span>Rp {printTx.discountNominal.toLocaleString("id-ID")}</span>
+                          </div>
+                          <div className="flex justify-between text-[6px] text-slate-500 pl-1">
+                            <span>Penukaran Akumulasi Loyalitas</span>
+                          </div>
                         </div>
-                        <div className="flex justify-between text-[6px] text-slate-500 pl-1">
-                          <span>{printTx.volumeMl} ml x Rp {(prices.find(p => p.scentName === printTx.scentName)?.pricePerMl || 3500).toLocaleString("id-ID")} /ml</span>
-                        </div>
-                      </div>
+                      ) : (
+                        <>
+                          <div className="text-[7px] text-slate-800 space-y-0.5">
+                            <div className="flex justify-between font-semibold">
+                              <span>Bibit {printTx.scentName} ({printTx.volumeMl}ml)</span>
+                              <span>
+                                Rp {((printTx.volumeMl || 0) * (prices.find(p => p.scentName === printTx.scentName)?.pricePerMl || 3500) * (printTx.bottleCount || 1)).toLocaleString("id-ID")}
+                              </span>
+                            </div>
+                            <div className="flex justify-between text-[6px] text-slate-500 pl-1">
+                              <span>{printTx.volumeMl} ml x Rp {(prices.find(p => p.scentName === printTx.scentName)?.pricePerMl || 3500).toLocaleString("id-ID")} /ml</span>
+                            </div>
+                          </div>
 
-                      {printTx.bottleSize && printTx.bottleSize !== "None" && (
-                        <div className="text-[7px] pt-1 flex justify-between text-slate-800">
-                          <span>Botol {printTx.bottleSize} ({printTx.bottleCount} pcs)</span>
-                          <span>
-                            Rp {((bottleSizes.find(b => b.size === printTx.bottleSize)?.price || 0) * (printTx.bottleCount || 1)).toLocaleString("id-ID")}
-                          </span>
-                        </div>
+                          {printTx.bottleSize && printTx.bottleSize !== "None" && (
+                            <div className="text-[7px] pt-1 flex justify-between text-slate-800">
+                              <span>Botol {printTx.bottleSize} ({printTx.bottleCount} pcs)</span>
+                              <span>
+                                Rp {((bottleSizes.find(b => b.size === printTx.bottleSize)?.price || 0) * (printTx.bottleCount || 1)).toLocaleString("id-ID")}
+                              </span>
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
 
@@ -4453,9 +4482,10 @@ export default function App() {
                       <div className="flex justify-between text-[7px] text-slate-700">
                         <span>SUBTOTAL</span>
                         <span>
-                          Rp {(
-                            ((printTx.volumeMl || 0) * (prices.find(p => p.scentName === printTx.scentName)?.pricePerMl || 3500) * (printTx.bottleCount || 1)) +
-                            ((printTx.bottleSize && printTx.bottleSize !== "None" ? (bottleSizes.find(b => b.size === printTx.bottleSize)?.price || 0) : 0) * (printTx.bottleCount || 1))
+                          Rp {(printTx.scentName === "Klaim Promo Potongan"
+                            ? printTx.discountNominal
+                            : (((printTx.volumeMl || 0) * (prices.find(p => p.scentName === printTx.scentName)?.pricePerMl || 3500) * (printTx.bottleCount || 1)) +
+                               ((printTx.bottleSize && printTx.bottleSize !== "None" ? (bottleSizes.find(b => b.size === printTx.bottleSize)?.price || 0) : 0) * (printTx.bottleCount || 1)))
                           ).toLocaleString("id-ID")}
                         </span>
                       </div>
@@ -4467,7 +4497,7 @@ export default function App() {
                       ) : null}
                       <div className="flex justify-between text-[8px] font-black border-t border-dotted border-slate-400 pt-1">
                         <span>TOTAL BAYAR</span>
-                        <span>Rp {printTx.totalPrice.toLocaleString("id-ID")}</span>
+                        <span>Rp {(printTx.scentName === "Klaim Promo Potongan" ? 0 : printTx.totalPrice).toLocaleString("id-ID")}</span>
                       </div>
                     </div>
 

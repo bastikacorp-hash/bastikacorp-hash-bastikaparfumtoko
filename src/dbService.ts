@@ -1055,15 +1055,24 @@ export function subscribeToPromoConfig(callback: (config: PromoConfig) => void) 
 
 export async function claimCustomerPromo(customerId: string, operatorEmail: string) {
   await runTransaction(db, async (transaction) => {
-    // 1. Fetch promo config
+    // 1. Fetch promo config (Read)
     const promoRef = doc(db, "config", "promo");
     const promoSnap = await transaction.get(promoRef);
+
+    // 2. Fetch customer (Read)
+    const customerRef = doc(db, "customers", customerId);
+    const customerSnap = await transaction.get(customerRef);
+
+    // 3. Fetch cash config (Read)
+    const cashRef = doc(db, "config", "cash");
+    const cashSnap = await transaction.get(cashRef);
+
+    // ==========================================
+    // VALIDATIONS AND COMPUTATIONS (No side-effects)
+    // ==========================================
     const threshold = promoSnap.exists() ? (promoSnap.data().threshold ?? 500000) : 500000;
     const discountAmount = promoSnap.exists() ? (promoSnap.data().discountAmount ?? 50000) : 50000;
 
-    // 2. Fetch customer
-    const customerRef = doc(db, "customers", customerId);
-    const customerSnap = await transaction.get(customerRef);
     if (!customerSnap.exists()) {
       throw new Error("Pelanggan tidak ditemukan!");
     }
@@ -1076,24 +1085,27 @@ export async function claimCustomerPromo(customerId: string, operatorEmail: stri
     const newTotal = currentTotal - threshold;
     const currentClaims = customerSnap.data().claimedPromos || 0;
 
-    // 3. Update customer total & claim count
+    let currentBalance = 15000000;
+    if (cashSnap.exists()) {
+      currentBalance = cashSnap.data().balance;
+    }
+    const newBalance = currentBalance - discountAmount;
+
+    // ==========================================
+    // WRITE OPERATIONS (EXECUTE AFTER ALL READS)
+    // ==========================================
+
+    // A. Update customer total & claim count
     transaction.update(customerRef, {
       totalPurchase: newTotal,
       claimedPromos: currentClaims + 1,
       updatedAt: new Date().toISOString()
     });
 
-    // 4. Fetch cash config and update balance
-    const cashRef = doc(db, "config", "cash");
-    const cashSnap = await transaction.get(cashRef);
-    let currentBalance = 15000000;
-    if (cashSnap.exists()) {
-      currentBalance = cashSnap.data().balance;
-    }
-    const newBalance = currentBalance - discountAmount;
+    // B. Update cash balance
     transaction.update(cashRef, { balance: newBalance });
 
-    // 5. Record cash mutation (outflow)
+    // C. Record cash mutation (outflow)
     const mutId = "mut_" + generateId();
     const mutationRef = doc(db, "cash_ledger", mutId);
     transaction.set(mutationRef, {
@@ -1107,7 +1119,7 @@ export async function claimCustomerPromo(customerId: string, operatorEmail: stri
       referenceId: customerId
     });
 
-    // 6. Record Transaction document so we can view and print it as an invoice!
+    // D. Record Transaction document so we can view and print it as an invoice!
     const txId = "tx_" + generateId();
     const txRef = doc(db, "transactions", txId);
     transaction.set(txRef, {

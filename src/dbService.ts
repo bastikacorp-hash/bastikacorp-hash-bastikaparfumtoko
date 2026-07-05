@@ -25,7 +25,8 @@ import {
   CashMutation, 
   UserProfile,
   BottleSize,
-  InvoiceSettings
+  InvoiceSettings,
+  Customer
 } from "./types";
 
 // Helper for unique ID generation if Firestore auto-id isn't used
@@ -302,6 +303,16 @@ export async function addTransaction(tx: Omit<Transaction, "id">) {
       bottleSnap = await transaction.get(bottleRef);
     }
 
+    // F. Customer Document Ref & Read
+    let customerRef = null;
+    let customerSnap = null;
+    const hasValidCustomer = tx.type === "sale" && tx.customerName && tx.customerName.trim().toLowerCase() !== "pelanggan umum";
+    if (hasValidCustomer && tx.customerName) {
+      const custId = "cust_" + tx.customerName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
+      customerRef = doc(db, "customers", custId);
+      customerSnap = await transaction.get(customerRef);
+    }
+
     // ==========================================
     // 2. NOW PERFORM ALL WRITE OPERATIONS (SETS/UPDATES)
     // ==========================================
@@ -372,6 +383,25 @@ export async function addTransaction(tx: Omit<Transaction, "id">) {
         description: `Penjualan: ${tx.scentName || "Parfum"} (${tx.volumeMl}ml) + Botol ${tx.bottleSize} x ${tx.bottleCount}`,
         referenceId: id
       });
+
+      // Update Customer Accumulation
+      if (hasValidCustomer && customerRef && tx.customerName) {
+        if (customerSnap && customerSnap.exists()) {
+          const currentTotal = customerSnap.data().totalPurchase || 0;
+          transaction.update(customerRef, {
+            totalPurchase: currentTotal + tx.totalPrice,
+            updatedAt: dateStr
+          });
+        } else {
+          transaction.set(customerRef, {
+            id: "cust_" + tx.customerName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_"),
+            name: tx.customerName.trim(),
+            totalPurchase: tx.totalPrice,
+            claimedPromos: 0,
+            updatedAt: dateStr
+          });
+        }
+      }
 
     } else if (tx.type === "purchase") {
       // PEMBELIAN: menambah stok bibit/alkohol/botol, mengurangi kas
@@ -505,6 +535,16 @@ export async function deleteTransaction(id: string) {
       bottleSnap = await transaction.get(bottleRef);
     }
 
+    // Customer Ref & Read
+    let customerRef = null;
+    let customerSnap = null;
+    const hasValidCustomer = tx.type === "sale" && tx.customerName && tx.customerName.trim().toLowerCase() !== "pelanggan umum";
+    if (hasValidCustomer && tx.customerName) {
+      const custId = "cust_" + tx.customerName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
+      customerRef = doc(db, "customers", custId);
+      customerSnap = await transaction.get(customerRef);
+    }
+
     // 4. Perform the inverse stock / cash operations
     let newBalance = currentBalance;
     const dateStr = new Date().toISOString();
@@ -555,6 +595,16 @@ export async function deleteTransaction(id: string) {
         description: `Pembatalan Penjualan: ${tx.scentName || "Parfum"} (${tx.volumeMl}ml) + Botol ${tx.bottleSize} x ${tx.bottleCount}`,
         referenceId: id
       });
+
+      // Revert customer accumulation
+      if (hasValidCustomer && customerRef && customerSnap && customerSnap.exists()) {
+        const currentTotal = customerSnap.data().totalPurchase || 0;
+        const newTotal = Math.max(0, currentTotal - tx.totalPrice);
+        transaction.update(customerRef, {
+          totalPurchase: newTotal,
+          updatedAt: dateStr
+        });
+      }
 
     } else if (tx.type === "purchase") {
       // Revert PURCHASE (pembelian)
@@ -942,5 +992,185 @@ export function subscribeToInvoiceSettings(callback: (settings: InvoiceSettings)
 export async function updateInvoiceSettings(settings: InvoiceSettings) {
   await setDoc(doc(db, "config", "invoice"), settings);
 }
+
+// ==========================================
+// CUSTOMER & PROMO SERVICE
+// ==========================================
+export function subscribeToCustomers(callback: (customers: Customer[]) => void) {
+  return onSnapshot(collection(db, "customers"), (snapshot) => {
+    const list: Customer[] = [];
+    snapshot.forEach((docSnap) => {
+      list.push(docSnap.data() as Customer);
+    });
+    callback(list);
+  });
+}
+
+export async function updatePromoThreshold(threshold: number) {
+  const promoRef = doc(db, "config", "promo");
+  await setDoc(promoRef, { threshold, updatedAt: new Date().toISOString() });
+}
+
+export function subscribeToPromoThreshold(callback: (threshold: number) => void) {
+  const promoRef = doc(db, "config", "promo");
+  return onSnapshot(promoRef, (docSnap) => {
+    if (docSnap.exists() && docSnap.data().threshold !== undefined) {
+      callback(docSnap.data().threshold);
+    } else {
+      callback(500000); // default 500,000 Rp
+    }
+  });
+}
+
+export async function claimCustomerPromo(customerId: string, promoAmount: number) {
+  await runTransaction(db, async (transaction) => {
+    const customerRef = doc(db, "customers", customerId);
+    const customerSnap = await transaction.get(customerRef);
+    if (!customerSnap.exists()) {
+      throw new Error("Pelanggan tidak ditemukan!");
+    }
+    const currentTotal = customerSnap.data().totalPurchase;
+    if (currentTotal < promoAmount) {
+      throw new Error("Akumulasi pembelian tidak mencukupi untuk klaim promo!");
+    }
+
+    const newTotal = currentTotal - promoAmount;
+    const currentClaims = customerSnap.data().claimedPromos || 0;
+
+    // Update customer total & claim count
+    transaction.update(customerRef, {
+      totalPurchase: newTotal,
+      claimedPromos: currentClaims + 1,
+      updatedAt: new Date().toISOString()
+    });
+
+    // Record cash mutation showing the claim as a promo reward mutation
+    const cashRef = doc(db, "config", "cash");
+    const cashSnap = await transaction.get(cashRef);
+    let currentBalance = 15000000;
+    if (cashSnap.exists()) {
+      currentBalance = cashSnap.data().balance;
+    }
+
+    const mutId = "mut_" + generateId();
+    const mutationRef = doc(db, "cash_ledger", mutId);
+    transaction.set(mutationRef, {
+      id: mutId,
+      date: new Date().toISOString(),
+      type: "out",
+      amount: 0, // Promo claim itself has 0 impact on cash ledger balances
+      balanceBefore: currentBalance,
+      balanceAfter: currentBalance,
+      description: `Klaim Promo Potongan Pelanggan: ${customerSnap.data().name} (Batas Minimal: Rp ${promoAmount.toLocaleString("id-ID")})`,
+      referenceId: customerId
+    });
+  });
+}
+
+// ==========================================
+// DATABASE BACKUP & RESTORE SERVICE (ADMIN ONLY)
+// ==========================================
+export async function exportDatabaseData() {
+  const collections = [
+    "users",
+    "prices",
+    "shelves",
+    "stocks",
+    "transactions",
+    "salaries",
+    "cash_ledger",
+    "bottle_sizes",
+    "customers",
+    "config"
+  ];
+  const backupData: Record<string, any[]> = {};
+
+  for (const colName of collections) {
+    const colRef = collection(db, colName);
+    const snap = await getDocs(colRef);
+    const docsList: any[] = [];
+    snap.forEach((d) => {
+      docsList.push({ id: d.id, ...d.data() });
+    });
+    backupData[colName] = docsList;
+  }
+
+  return backupData;
+}
+
+export async function clearEntireDatabase() {
+  const collections = [
+    "users",
+    "prices",
+    "shelves",
+    "stocks",
+    "transactions",
+    "salaries",
+    "cash_ledger",
+    "bottle_sizes",
+    "customers",
+    "config"
+  ];
+
+  for (const colName of collections) {
+    const colRef = collection(db, colName);
+    const snap = await getDocs(colRef);
+    
+    const deletePromises: Promise<any>[] = [];
+    snap.forEach((docSnap) => {
+      deletePromises.push(deleteDoc(docSnap.ref));
+    });
+    await Promise.all(deletePromises);
+  }
+}
+
+export async function importDatabaseData(backupData: Record<string, any[]>, mode: "clean" | "merge") {
+  const expectedCollections = [
+    "users",
+    "prices",
+    "shelves",
+    "stocks",
+    "transactions",
+    "salaries",
+    "cash_ledger",
+    "bottle_sizes",
+    "customers",
+    "config"
+  ];
+  
+  let hasValidKeys = false;
+  for (const col of expectedCollections) {
+    if (Array.isArray(backupData[col])) {
+      hasValidKeys = true;
+    }
+  }
+  
+  if (!hasValidKeys) {
+    throw new Error("Format file backup tidak valid atau tidak memiliki data Bastika Parfum!");
+  }
+
+  if (mode === "clean") {
+    await clearEntireDatabase();
+  }
+
+  for (const colName of expectedCollections) {
+    const dataList = backupData[colName];
+    if (!Array.isArray(dataList)) continue;
+
+    for (const docData of dataList) {
+      if (!docData.id) continue;
+      const { id, ...fields } = docData;
+      
+      const docRef = doc(db, colName, id);
+      
+      if (mode === "merge") {
+        await setDoc(docRef, fields, { merge: true });
+      } else {
+        await setDoc(docRef, fields);
+      }
+    }
+  }
+}
+
 
 

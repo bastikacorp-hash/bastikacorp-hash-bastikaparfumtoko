@@ -87,3 +87,12 @@ export interface InvoiceSettings {
   appIconUrl?: string;
 }
 
+export interface Customer {
+  id: string;
+  name: string;
+  totalPurchase: number;
+  claimedPromos: number;
+  updatedAt: string;
+}
+
+

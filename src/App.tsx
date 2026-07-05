@@ -40,7 +40,14 @@ import {
   deleteBottleSize,
   updateInitialCapital,
   subscribeToInvoiceSettings,
-  updateInvoiceSettings
+  updateInvoiceSettings,
+  subscribeToCustomers,
+  subscribeToPromoThreshold,
+  updatePromoThreshold,
+  claimCustomerPromo,
+  exportDatabaseData,
+  importDatabaseData,
+  clearEntireDatabase
 } from "./dbService";
 import { 
   Shelf as ShelfType, 
@@ -52,7 +59,8 @@ import {
   UserProfile, 
   UserRole,
   BottleSize,
-  InvoiceSettings
+  InvoiceSettings,
+  Customer
 } from "./types";
 import { 
   ShoppingBag, 
@@ -86,7 +94,9 @@ import {
   FileSpreadsheet,
   X,
   Printer,
-  Upload
+  Upload,
+  Database,
+  UserCheck
 } from "lucide-react";
 
 export default function App() {
@@ -185,6 +195,13 @@ export default function App() {
   const [manualMutationType, setManualMutationType] = useState<"in" | "out">("in");
   const [manualMutationAmount, setManualMutationAmount] = useState<number>(0);
   const [manualMutationDesc, setManualMutationDesc] = useState("");
+
+  // Customer and Promo State
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [promoThreshold, setPromoThreshold] = useState<number>(500000);
+  const [customerSearchTerm, setCustomerSearchTerm] = useState("");
+  const [adminThresholdInput, setAdminThresholdInput] = useState<string>("500000");
+
 
   // Filter & Excel Export state variables
   const [filterStartDate, setFilterStartDate] = useState<string>("");
@@ -371,6 +388,11 @@ export default function App() {
     const unsubTx = subscribeToTransactions(setTransactions);
     const unsubBottleSizes = subscribeToBottleSizes(setBottleSizes);
     const unsubInvoice = subscribeToInvoiceSettings(setInvoiceSettings);
+    const unsubCustomers = subscribeToCustomers(setCustomers);
+    const unsubPromo = subscribeToPromoThreshold((val) => {
+      setPromoThreshold(val);
+      setAdminThresholdInput(val.toString());
+    });
 
     let unsubSalaries = () => {};
     let unsubLedger = () => {};
@@ -390,6 +412,8 @@ export default function App() {
       unsubSalaries();
       unsubLedger();
       unsubInvoice();
+      unsubCustomers();
+      unsubPromo();
     };
   }, [userRole]);
 
@@ -822,6 +846,86 @@ export default function App() {
       } catch (err: any) {
         showToast(err.message || "Gagal menghapus transaksi", "error");
       }
+    }
+  };
+
+  const handleClaimPromo = async (customerId: string, customerName: string) => {
+    if (confirm(`Klaim promo potongan untuk pelanggan "${customerName}"? Pembelian terakumulasi akan dikurangi sebesar batas nominal promo ${formatRupiah(promoThreshold)}.`)) {
+      try {
+        await claimCustomerPromo(customerId, promoThreshold);
+        showToast(`Promo untuk ${customerName} berhasil diklaim!`, "success");
+      } catch (err: any) {
+        showToast(err.message || "Gagal mengklaim promo", "error");
+      }
+    }
+  };
+
+  const handleUpdateThreshold = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const parsed = parseInt(adminThresholdInput);
+    if (isNaN(parsed) || parsed <= 0) {
+      showToast("Batas nominal promo harus berupa angka positif!", "error");
+      return;
+    }
+    try {
+      await updatePromoThreshold(parsed);
+      showToast("Batas minimal nominal promo global berhasil diperbarui!", "success");
+    } catch (err: any) {
+      showToast(err.message || "Gagal memperbarui batas promo", "error");
+    }
+  };
+
+  const handleExportBackup = async () => {
+    try {
+      const data = await exportDatabaseData();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `backup_bastikaparfum_${new Date().toISOString().split("T")[0]}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      showToast("Database berhasil diekspor!", "success");
+    } catch (err: any) {
+      showToast(err.message || "Gagal mengekspor database", "error");
+    }
+  };
+
+  const handleImportBackup = async (file: File, mode: "clean" | "merge") => {
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const text = e.target?.result as string;
+        const backup = JSON.parse(text);
+        
+        await importDatabaseData(backup, mode);
+        showToast(
+          mode === "clean" 
+            ? "Database berhasil di-restore (tulis ulang)!" 
+            : "Database berhasil digabungkan (merge)!", 
+          "success"
+        );
+      } catch (err: any) {
+        showToast("Gagal mengimpor file: " + (err.message || "Format JSON tidak valid"), "error");
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleClearDatabase = async () => {
+    const confirmation = prompt(
+      "PERINGATAN KRITIKAL: Tindakan ini akan menghapus seluruh data transaksi, stok, rak, pengeluaran gaji, kas, dan akun pelanggan secara permanen!\n\nKetik kata kunci 'HAPUS PERMANEN' di bawah untuk melanjutkan:"
+    );
+    if (confirmation === "HAPUS PERMANEN") {
+      try {
+        await clearEntireDatabase();
+        showToast("Seluruh database berhasil dibersihkan!", "success");
+        window.location.reload();
+      } catch (err: any) {
+        showToast(err.message || "Gagal membersihkan database", "error");
+      }
+    } else if (confirmation !== null) {
+      showToast("Konfirmasi salah! Pembersihan database dibatalkan.", "error");
     }
   };
 
@@ -1434,6 +1538,17 @@ export default function App() {
                 <Settings className="h-4 w-4" />
                 Format Kop Invoice
               </button>
+
+              <button
+                id="nav-db-management-btn"
+                onClick={() => setActiveTab("db_management")}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition-colors cursor-pointer ${
+                  activeTab === "db_management" ? "bg-emerald-600 text-white font-bold" : "text-slate-400 hover:bg-slate-800 hover:text-white"
+                }`}
+              >
+                <Database className="h-4 w-4" />
+                Pengaturan Database
+              </button>
             </>
           )}
 
@@ -1446,6 +1561,17 @@ export default function App() {
           >
             <Calendar className="h-4 w-4" />
             Riwayat Transaksi
+          </button>
+
+          <button
+            id="nav-customers-btn"
+            onClick={() => setActiveTab("customers")}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition-colors cursor-pointer ${
+              activeTab === "customers" ? "bg-emerald-600 text-white font-bold" : "text-slate-400 hover:bg-slate-800 hover:text-white"
+            }`}
+          >
+            <UserCheck className="h-4 w-4" />
+            Database Pelanggan
           </button>
         </nav>
 
@@ -1475,6 +1601,9 @@ export default function App() {
                      activeTab === 'purchases' ? 'Pencatatan Belanja Stok' :
                      activeTab === 'accounting' ? 'Buku Kas & Laporan Keuangan' :
                      activeTab === 'users' ? 'Manajemen Akses Karyawan (Client)' :
+                     activeTab === 'invoice_settings' ? 'Format Kop Invoice' :
+                     activeTab === 'customers' ? 'Sistem Database Pelanggan & Promo' :
+                     activeTab === 'db_management' ? 'Pengaturan Backup & Database' :
                      'Riwayat Semua Mutasi'}</span>
               <span className="text-xs font-normal text-slate-500">| Bastika Parfum</span>
             </h1>
@@ -3217,6 +3346,7 @@ export default function App() {
                     <tr className="bg-slate-50 border-b border-slate-100 text-slate-500 uppercase tracking-wider text-[10px] font-bold">
                       <th className="py-3 px-4">Tanggal & Jam</th>
                       <th className="py-3 px-4">Tipe Transaksi</th>
+                      <th className="py-3 px-4">Nama Pelanggan</th>
                       <th className="py-3 px-4">Detail Mutasi Barang</th>
                       <th className="py-3 px-4">Operator Kasir</th>
                       <th className="py-3 px-4 text-right">Total Transaksi</th>
@@ -3261,6 +3391,9 @@ export default function App() {
                           </span>
                         </td>
                         <td className="py-3 px-4">
+                          <span className="font-semibold text-slate-800">{t.customerName || "-"}</span>
+                        </td>
+                        <td className="py-3 px-4">
                           <div className="font-semibold text-slate-800">{t.description}</div>
                           <span className="text-[10px] text-slate-400">
                             ID: {t.id} {t.volumeMl ? `| Volume: ${t.volumeMl}ml` : ""} {t.bottleSize && t.bottleSize !== "None" ? `| Botol: ${t.bottleSize} (${t.bottleCount}x)` : ""}
@@ -3300,7 +3433,7 @@ export default function App() {
                     ))}
                     {transactions.length === 0 && (
                       <tr>
-                        <td colSpan={6} className="py-8 text-center text-slate-400 italic">
+                        <td colSpan={7} className="py-8 text-center text-slate-400 italic">
                           Belum ada histori transaksi terekam.
                         </td>
                       </tr>
@@ -3710,6 +3843,234 @@ export default function App() {
                         <p className="font-bold uppercase text-slate-700">{tempSettings.footerMessage1}</p>
                         <p className="italic leading-snug">{tempSettings.footerMessage2}</p>
                       </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ==========================================
+              11. DATABASE PELANGGAN (CUSTOMERS) VIEW
+              ========================================== */}
+          {activeTab === "customers" && (
+            <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-6 animate-in fade-in duration-200">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-slate-100">
+                <div>
+                  <h3 className="font-bold text-sm text-slate-900 font-display">Sistem Database & Loyalitas Pelanggan</h3>
+                  <p className="text-[11px] text-slate-500">Mencatat akumulasi nominal transaksi untuk sistem diskon promo otomatis.</p>
+                </div>
+                
+                {/* Admin Only threshold settings form */}
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 md:w-[350px]">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-2">Batas Klaim Promo (Batas Minimal)</span>
+                  {userRole === "admin" ? (
+                    <form onSubmit={handleUpdateThreshold} className="flex gap-2">
+                      <div className="relative flex-1">
+                        <span className="absolute left-3 top-2 text-xs font-bold text-slate-400">Rp</span>
+                        <input
+                          type="number"
+                          value={adminThresholdInput}
+                          onChange={(e) => setAdminThresholdInput(e.target.value)}
+                          className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800 font-semibold"
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs px-3 rounded-xl transition-all cursor-pointer shadow-sm"
+                      >
+                        Update
+                      </button>
+                    </form>
+                  ) : (
+                    <div className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                      <span className="bg-emerald-100 text-emerald-800 text-[10px] px-2 py-0.5 rounded">Aktif</span>
+                      Rp {promoThreshold.toLocaleString("id-ID")}
+                      <span className="text-[9px] text-slate-400 font-normal block">(Hanya Admin yang dapat mengubah)</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Filtering / Search */}
+              <div className="flex items-center gap-3">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3.5 top-2.5 h-4 w-4 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Cari nama pelanggan..."
+                    value={customerSearchTerm}
+                    onChange={(e) => setCustomerSearchTerm(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
+                  />
+                </div>
+                {customerSearchTerm && (
+                  <button
+                    onClick={() => setCustomerSearchTerm("")}
+                    className="text-xs font-bold text-slate-500 hover:text-slate-800 cursor-pointer"
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
+
+              {/* Customer List */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-100 text-slate-500 uppercase tracking-wider text-[10px] font-bold">
+                      <th className="py-3 px-4">Nama Pelanggan</th>
+                      <th className="py-3 px-4 text-right">Akumulasi Belanja</th>
+                      <th className="py-3 px-4 text-center">Sudah Klaim</th>
+                      <th className="py-3 px-4">Terakhir Update</th>
+                      <th className="py-3 px-4 text-center">Status Promo</th>
+                      <th className="py-3 px-4 text-center">Aksi Klaim</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {customers.filter(c => {
+                      if (!customerSearchTerm) return true;
+                      return c.name.toLowerCase().includes(customerSearchTerm.toLowerCase());
+                    }).map((c) => {
+                      const isEligible = c.totalPurchase >= promoThreshold;
+                      return (
+                        <tr key={c.id} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="py-3.5 px-4 font-bold text-slate-800">{c.name}</td>
+                          <td className="py-3.5 px-4 text-right font-mono font-bold text-sm text-slate-700">
+                            {formatRupiah(c.totalPurchase)}
+                          </td>
+                          <td className="py-3.5 px-4 text-center">
+                            <span className="bg-slate-100 text-slate-700 font-semibold text-[10px] px-2 py-0.5 rounded-full">
+                              {c.claimedPromos || 0} Kali
+                            </span>
+                          </td>
+                          <td className="py-3.5 px-4 text-slate-500 font-mono">
+                            {c.updatedAt ? new Date(c.updatedAt).toLocaleString("id-ID") : "-"}
+                          </td>
+                          <td className="py-3.5 px-4 text-center">
+                            {isEligible ? (
+                              <span className="bg-emerald-100 text-emerald-800 font-extrabold text-[9px] px-2.5 py-0.5 rounded-full animate-pulse border border-emerald-200">
+                                BISA KLAIM
+                              </span>
+                            ) : (
+                              <div className="text-[10px] text-slate-400">
+                                Kurang <span className="font-bold text-slate-500 font-mono">{formatRupiah(promoThreshold - c.totalPurchase)}</span>
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-3.5 px-4 text-center">
+                            <button
+                              disabled={!isEligible}
+                              onClick={() => handleClaimPromo(c.id, c.name)}
+                              className={`px-3 py-1.5 rounded-xl text-[10px] font-extrabold shadow-sm transition-all cursor-pointer ${
+                                isEligible
+                                  ? "bg-emerald-600 hover:bg-emerald-500 text-white"
+                                  : "bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed"
+                              }`}
+                            >
+                              Klaim Promo
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {customers.length === 0 && (
+                      <tr>
+                        <td colSpan={6} className="py-8 text-center text-slate-400 italic">
+                          Belum ada data pelanggan tercatat. Transaksi kasir dengan mengisi nama pelanggan akan otomatis tercatat di sini.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* ==========================================
+              12. DATABASE MANAGEMENT VIEW (Admin Only)
+              ========================================== */}
+          {activeTab === "db_management" && userRole === "admin" && (
+            <div className="max-w-3xl mx-auto space-y-6 animate-in fade-in duration-200">
+              <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
+                <div>
+                  <h3 className="font-bold text-sm text-slate-900 font-display">Pengaturan & Backup Database Bastika Parfum</h3>
+                  <p className="text-[11px] text-slate-500">Ekspor (backup) cadangan data, impor (restore) dari file eksternal, atau kosongkan database jika kapasitas penuh.</p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4">
+                  {/* Backup Card */}
+                  <div className="border border-slate-200 rounded-2xl p-5 space-y-4 hover:border-emerald-500 transition-colors bg-slate-50/40">
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-600">
+                        <Database className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-xs text-slate-800">Ekspor Database (Backup)</h4>
+                        <p className="text-[10px] text-slate-400">Amankan dan simpan seluruh data ke file JSON.</p>
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-slate-600 leading-relaxed">Ekspor mencakup semua koleksi: akun pengguna, harga aroma, rak parfum, mutasi inventori, riwayat transaksi, buku kas besar, dan riwayat gaji.</p>
+                    <button
+                      onClick={handleExportBackup}
+                      className="w-full bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs py-2 rounded-xl transition-all shadow cursor-pointer flex items-center justify-center gap-2"
+                    >
+                      Ekspor Database (.json)
+                    </button>
+                  </div>
+
+                  {/* Restore Card */}
+                  <div className="border border-slate-200 rounded-2xl p-5 space-y-4 hover:border-emerald-500 transition-colors bg-slate-50/40">
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center text-blue-600">
+                        <Upload className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-xs text-slate-800">Impor Database (Restore)</h4>
+                        <p className="text-[10px] text-slate-400">Pulihkan atau pindahkan database Anda.</p>
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-3">
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Pilih File Backup JSON</label>
+                      <input
+                        type="file"
+                        accept=".json"
+                        id="db-import-file"
+                        className="w-full text-xs text-slate-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-[10px] file:font-extrabold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 cursor-pointer"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          
+                          const modeChoice = confirm("Metode Pemulihan:\n\nKlik OK untuk 'TULIS ULANG' (Menghapus seluruh database aktif dan memulihkan data persis seperti backup).\n\nKlik CANCEL untuk 'GABUNGKAN' (Menggabungkan data backup dengan database aktif tanpa duplikasi id).");
+                          
+                          handleImportBackup(file, modeChoice ? "clean" : "merge");
+                        }}
+                      />
+                    </div>
+                    <p className="text-[10px] text-rose-500 leading-snug font-semibold bg-rose-50 border border-rose-100 rounded-lg p-2.5">
+                      ⚠️ PERHATIAN: Memulihkan database dengan mode 'Tulis Ulang' akan menghapus seluruh data aktif Anda. Pastikan format file backup sesuai!
+                    </p>
+                  </div>
+                </div>
+
+                {/* Destructive Zone */}
+                <div className="border-t border-slate-100 pt-6 mt-4">
+                  <div className="border border-rose-200 rounded-2xl p-5 space-y-3 bg-rose-50/10">
+                    <h4 className="font-bold text-xs text-rose-700 flex items-center gap-1.5 uppercase tracking-wider">
+                      <AlertCircle className="h-4 w-4" />
+                      Zona Bahaya (Destructive Zone)
+                    </h4>
+                    <p className="text-[11px] text-slate-600 leading-relaxed">Fitur ini digunakan jika kapasitas penyimpanan penuh atau untuk pembersihan berkala. Data yang dihapus tidak dapat dipulihkan kembali kecuali Anda memiliki cadangan (backup) ekspor sebelumnya.</p>
+                    
+                    <div className="flex justify-end pt-2">
+                      <button
+                        onClick={handleClearDatabase}
+                        className="bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs py-2.5 px-5 rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-1.5"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        Kosongkan Seluruh Database
+                      </button>
                     </div>
                   </div>
                 </div>

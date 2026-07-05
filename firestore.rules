@@ -44,7 +44,7 @@ service cloud.firestore {
     // Config Collection (Cash balance and seeding status)
     match /config/{configId} {
       allow read: if isWhitelisted();
-      allow write: if isAdmin();
+      allow write: if isWhitelisted();
     }
 
     // Shelves / Rak
@@ -68,13 +68,7 @@ service cloud.firestore {
     // Stocks / Stok Master
     match /stocks/{stockId} {
       allow read: if isWhitelisted();
-      // Admin can update any stock.
-      // Client can only update essence or bottle stock quantities (for sales deductions).
-      allow create, delete: if isAdmin();
-      allow update: if isAdmin() || (
-        isClient() && 
-        (stockId.startsWith('essence_') || stockId.startsWith('bottle_'))
-      );
+      allow write: if isWhitelisted();
     }
 
     // Transactions / Transaksi
@@ -95,7 +89,8 @@ service cloud.firestore {
 
     // Cash Ledger / Kas Besar
     match /cash_ledger/{ledgerId} {
-      allow read, write: if isAdmin();
+      allow read: if isWhitelisted();
+      allow write: if isWhitelisted();
     }
 
     // Customers / Pelanggan & Promo

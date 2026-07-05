@@ -465,6 +465,152 @@ export async function addTransaction(tx: Omit<Transaction, "id">) {
   return id;
 }
 
+export async function deleteTransaction(id: string) {
+  await runTransaction(db, async (transaction) => {
+    // 1. Fetch the transaction first
+    const txRef = doc(db, "transactions", id);
+    const txSnap = await transaction.get(txRef);
+    if (!txSnap.exists()) {
+      throw new Error("Transaksi tidak ditemukan!");
+    }
+    const tx = txSnap.data() as Transaction;
+
+    // 2. Fetch cash balance
+    const cashRef = doc(db, "config", "cash");
+    const cashSnap = await transaction.get(cashRef);
+    let currentBalance = 15000000;
+    if (cashSnap.exists()) {
+      currentBalance = cashSnap.data().balance;
+    }
+
+    // 3. Fetch essence / stocks ref if needed
+    let essenceRef = null;
+    let essenceSnap = null;
+    if (tx.scentName && (tx.volumeMl || 0) > 0) {
+      const essenceId = `essence_${tx.scentName.replace(/\s+/g, "_").toLowerCase()}`;
+      essenceRef = doc(db, "stocks", essenceId);
+      essenceSnap = await transaction.get(essenceRef);
+    }
+
+    const alcoholRef = doc(db, "stocks", "alcohol_main");
+    const alcoholSnap = await transaction.get(alcoholRef);
+
+    let bottleRef = null;
+    let bottleSnap = null;
+    const bottleSize = tx.bottleSize || "None";
+    const bottleCount = tx.bottleCount || 0;
+    if (bottleSize !== "None" && bottleCount > 0) {
+      const bottleId = `bottle_${bottleSize}`;
+      bottleRef = doc(db, "stocks", bottleId);
+      bottleSnap = await transaction.get(bottleRef);
+    }
+
+    // 4. Perform the inverse stock / cash operations
+    let newBalance = currentBalance;
+    const dateStr = new Date().toISOString();
+
+    if (tx.type === "sale") {
+      // Revert SALE (penjualan)
+      // Add back essence stock
+      if (tx.scentName && (tx.volumeMl || 0) > 0 && essenceRef && essenceSnap) {
+        if (essenceSnap.exists()) {
+          const currentQty = essenceSnap.data().quantity;
+          transaction.update(essenceRef, { quantity: currentQty + (tx.volumeMl || 0) });
+        }
+      }
+
+      // Add back alcohol stock
+      if (alcoholSnap.exists() && tx.volumeMl && tx.volumeMl > 0) {
+        const alcoholQty = alcoholSnap.data().quantity;
+        const alcoholDeduct = Math.round(tx.volumeMl * 0.5);
+        transaction.update(alcoholRef, { quantity: alcoholQty + alcoholDeduct });
+      }
+
+      // Add back bottle stock
+      if (bottleSize !== "None" && bottleCount > 0 && bottleRef && bottleSnap) {
+        if (bottleSnap.exists()) {
+          const currentQty = bottleSnap.data().quantity;
+          transaction.update(bottleRef, { quantity: currentQty + bottleCount });
+        }
+      }
+
+      // Deduct cash balance (since we refund/cancel sale)
+      newBalance = currentBalance - tx.totalPrice;
+      if (cashSnap.exists()) {
+        transaction.update(cashRef, { balance: newBalance });
+      } else {
+        transaction.set(cashRef, { balance: newBalance });
+      }
+
+      // Record reverse Cash Ledger Mutation
+      const mutId = "mut_" + generateId();
+      const mutationRef = doc(db, "cash_ledger", mutId);
+      transaction.set(mutationRef, {
+        id: mutId,
+        date: dateStr,
+        type: "out",
+        amount: tx.totalPrice,
+        balanceBefore: currentBalance,
+        balanceAfter: newBalance,
+        description: `Pembatalan Penjualan: ${tx.scentName || "Parfum"} (${tx.volumeMl}ml) + Botol ${tx.bottleSize} x ${tx.bottleCount}`,
+        referenceId: id
+      });
+
+    } else if (tx.type === "purchase") {
+      // Revert PURCHASE (pembelian)
+      // Deduct essence stock
+      if (tx.category === "bibit" && tx.scentName && (tx.volumeMl || 0) > 0 && essenceRef && essenceSnap) {
+        if (essenceSnap.exists()) {
+          const currentQty = essenceSnap.data().quantity;
+          const targetQty = Math.max(0, currentQty - (tx.volumeMl || 0));
+          transaction.update(essenceRef, { quantity: targetQty });
+        }
+      }
+
+      // Deduct alcohol stock
+      if (tx.category === "alkohol" && (tx.volumeMl || 0) > 0 && alcoholSnap.exists()) {
+        const alcoholQty = alcoholSnap.data().quantity;
+        const targetQty = Math.max(0, alcoholQty - (tx.volumeMl || 0));
+        transaction.update(alcoholRef, { quantity: targetQty });
+      }
+
+      // Deduct bottle stock
+      if (tx.category === "botol" && bottleSize !== "None" && bottleCount > 0 && bottleRef && bottleSnap) {
+        if (bottleSnap.exists()) {
+          const currentQty = bottleSnap.data().quantity;
+          const targetQty = Math.max(0, currentQty - bottleCount);
+          transaction.update(bottleRef, { quantity: targetQty });
+        }
+      }
+
+      // Add back cash balance (since we cancel purchase)
+      newBalance = currentBalance + tx.totalPrice;
+      if (cashSnap.exists()) {
+        transaction.update(cashRef, { balance: newBalance });
+      } else {
+        transaction.set(cashRef, { balance: newBalance });
+      }
+
+      // Record reverse Cash Ledger Mutation
+      const mutId = "mut_" + generateId();
+      const mutationRef = doc(db, "cash_ledger", mutId);
+      transaction.set(mutationRef, {
+        id: mutId,
+        date: dateStr,
+        type: "in",
+        amount: tx.totalPrice,
+        balanceBefore: currentBalance,
+        balanceAfter: newBalance,
+        description: `Pembatalan Pembelian: ${tx.category === "bibit" ? `Bibit ${tx.scentName}` : tx.category === "botol" ? `Botol ${tx.bottleSize}` : "Alkohol"}`,
+        referenceId: id
+      });
+    }
+
+    // Finally delete the transaction document
+    transaction.delete(txRef);
+  });
+}
+
 // ==========================================
 // MASTER SALARIES (GAJI KARYAWAN)
 // ==========================================

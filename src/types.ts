@@ -43,6 +43,7 @@ export interface Transaction {
   discountNominal?: number;
   description: string;
   operatorEmail: string;
+  customerName?: string;
 }
 
 export interface Salary {

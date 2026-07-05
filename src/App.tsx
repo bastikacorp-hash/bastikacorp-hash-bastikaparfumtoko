@@ -42,8 +42,8 @@ import {
   subscribeToInvoiceSettings,
   updateInvoiceSettings,
   subscribeToCustomers,
-  subscribeToPromoThreshold,
-  updatePromoThreshold,
+  subscribeToPromoConfig,
+  updatePromoConfig,
   claimCustomerPromo,
   updateCustomerName,
   deleteCustomer,
@@ -201,8 +201,10 @@ export default function App() {
   // Customer and Promo State
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [promoThreshold, setPromoThreshold] = useState<number>(500000);
+  const [promoDiscount, setPromoDiscount] = useState<number>(50000);
   const [customerSearchTerm, setCustomerSearchTerm] = useState("");
   const [adminThresholdInput, setAdminThresholdInput] = useState<string>("500000");
+  const [adminDiscountInput, setAdminDiscountInput] = useState<string>("50000");
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [editingCustomerName, setEditingCustomerName] = useState<string>("");
 
@@ -393,9 +395,11 @@ export default function App() {
     const unsubBottleSizes = subscribeToBottleSizes(setBottleSizes);
     const unsubInvoice = subscribeToInvoiceSettings(setInvoiceSettings);
     const unsubCustomers = subscribeToCustomers(setCustomers);
-    const unsubPromo = subscribeToPromoThreshold((val) => {
-      setPromoThreshold(val);
-      setAdminThresholdInput(val.toString());
+    const unsubPromo = subscribeToPromoConfig((config) => {
+      setPromoThreshold(config.threshold);
+      setAdminThresholdInput(config.threshold.toString());
+      setPromoDiscount(config.discountAmount);
+      setAdminDiscountInput(config.discountAmount.toString());
     });
 
     let unsubSalaries = () => {};
@@ -854,10 +858,11 @@ export default function App() {
   };
 
   const handleClaimPromo = async (customerId: string, customerName: string) => {
-    if (confirm(`Klaim promo potongan untuk pelanggan "${customerName}"? Pembelian terakumulasi akan dikurangi sebesar batas nominal promo ${formatRupiah(promoThreshold)}.`)) {
+    if (confirm(`Klaim promo potongan untuk pelanggan "${customerName}"? Pembelian terakumulasi akan dikurangi sebesar batas nominal promo ${formatRupiah(promoThreshold)}.\n\nPelanggan akan menerima potongan diskon sebesar ${formatRupiah(promoDiscount)} yang tersinkronisasi otomatis dengan transaksi dan invoice!`)) {
       try {
-        await claimCustomerPromo(customerId, promoThreshold);
-        showToast(`Promo untuk ${customerName} berhasil diklaim!`, "success");
+        const opEmail = currentUser?.email || customEmail || "Kasir";
+        await claimCustomerPromo(customerId, opEmail);
+        showToast(`Promo untuk ${customerName} berhasil diklaim dan invoice diskon tercatat!`, "success");
       } catch (err: any) {
         showToast(err.message || "Gagal mengklaim promo", "error");
       }
@@ -896,18 +901,23 @@ export default function App() {
     }
   };
 
-  const handleUpdateThreshold = async (e: React.FormEvent) => {
+  const handleUpdatePromoSettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    const parsed = parseInt(adminThresholdInput);
-    if (isNaN(parsed) || parsed <= 0) {
-      showToast("Batas nominal promo harus berupa angka positif!", "error");
+    const threshold = parseInt(adminThresholdInput);
+    const discount = parseInt(adminDiscountInput);
+    if (isNaN(threshold) || threshold <= 0) {
+      showToast("Batas minimal belanja harus berupa angka positif!", "error");
+      return;
+    }
+    if (isNaN(discount) || discount < 0) {
+      showToast("Nominal potongan diskon promo harus berupa angka positif atau nol!", "error");
       return;
     }
     try {
-      await updatePromoThreshold(parsed);
-      showToast("Batas minimal nominal promo global berhasil diperbarui!", "success");
+      await updatePromoConfig(threshold, discount);
+      showToast("Pengaturan nominal promo dan batas klaim global berhasil diperbarui!", "success");
     } catch (err: any) {
-      showToast(err.message || "Gagal memperbarui batas promo", "error");
+      showToast(err.message || "Gagal memperbarui pengaturan promo", "error");
     }
   };
 
@@ -3911,31 +3921,56 @@ export default function App() {
                 </div>
                 
                 {/* Admin Only threshold settings form */}
-                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 md:w-[350px]">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-2">Batas Klaim Promo (Batas Minimal)</span>
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 md:w-[480px]">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-3">Pengaturan Promo Diskon Global</span>
                   {userRole === "admin" ? (
-                    <form onSubmit={handleUpdateThreshold} className="flex gap-2">
-                      <div className="relative flex-1">
-                        <span className="absolute left-3 top-2 text-xs font-bold text-slate-400">Rp</span>
-                        <input
-                          type="number"
-                          value={adminThresholdInput}
-                          onChange={(e) => setAdminThresholdInput(e.target.value)}
-                          className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800 font-semibold"
-                        />
+                    <form onSubmit={handleUpdatePromoSettings} className="space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-[9px] font-bold text-slate-500 block mb-1">Batas Belanja Minimal (Klaim)</label>
+                          <div className="relative">
+                            <span className="absolute left-3 top-2 text-xs font-bold text-slate-400">Rp</span>
+                            <input
+                              type="number"
+                              value={adminThresholdInput}
+                              onChange={(e) => setAdminThresholdInput(e.target.value)}
+                              className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800 font-semibold"
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-bold text-slate-500 block mb-1">Nominal Potongan Diskon</label>
+                          <div className="relative">
+                            <span className="absolute left-3 top-2 text-xs font-bold text-slate-400">Rp</span>
+                            <input
+                              type="number"
+                              value={adminDiscountInput}
+                              onChange={(e) => setAdminDiscountInput(e.target.value)}
+                              className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800 font-semibold"
+                            />
+                          </div>
+                        </div>
                       </div>
-                      <button
-                        type="submit"
-                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs px-3 rounded-xl transition-all cursor-pointer shadow-sm"
-                      >
-                        Update
-                      </button>
+                      <div className="flex justify-end">
+                        <button
+                          type="submit"
+                          className="bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs px-4 py-2 rounded-xl transition-all cursor-pointer shadow-sm"
+                        >
+                          Simpan Pengaturan
+                        </button>
+                      </div>
                     </form>
                   ) : (
-                    <div className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                      <span className="bg-emerald-100 text-emerald-800 text-[10px] px-2 py-0.5 rounded">Aktif</span>
-                      Rp {promoThreshold.toLocaleString("id-ID")}
-                      <span className="text-[9px] text-slate-400 font-normal block">(Hanya Admin yang dapat mengubah)</span>
+                    <div className="flex flex-col gap-1.5">
+                      <div className="text-xs font-bold text-slate-800 flex items-center gap-2">
+                        <span className="bg-emerald-100 text-emerald-800 text-[10px] px-2 py-0.5 rounded font-extrabold">Batas Minimal</span>
+                        Rp {promoThreshold.toLocaleString("id-ID")}
+                      </div>
+                      <div className="text-xs font-bold text-slate-800 flex items-center gap-2">
+                        <span className="bg-blue-100 text-blue-800 text-[10px] px-2 py-0.5 rounded font-extrabold">Diskon Promo</span>
+                        Rp {promoDiscount.toLocaleString("id-ID")}
+                      </div>
+                      <span className="text-[9px] text-slate-400 font-normal block mt-1">(Hanya Admin yang dapat mengubah pengaturan ini)</span>
                     </div>
                   )}
                 </div>

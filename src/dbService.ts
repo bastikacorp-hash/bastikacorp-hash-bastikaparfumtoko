@@ -313,6 +313,10 @@ export async function addTransaction(tx: Omit<Transaction, "id">) {
       customerSnap = await transaction.get(customerRef);
     }
 
+    // G. Promo Config Ref & Read
+    const promoRef = doc(db, "config", "promo");
+    const promoSnap = await transaction.get(promoRef);
+
     // ==========================================
     // 2. NOW PERFORM ALL WRITE OPERATIONS (SETS/UPDATES)
     // ==========================================
@@ -388,11 +392,28 @@ export async function addTransaction(tx: Omit<Transaction, "id">) {
       if (hasValidCustomer && customerRef && tx.customerName) {
         if (customerSnap && customerSnap.exists()) {
           const currentTotal = customerSnap.data().totalPurchase || 0;
-          transaction.update(customerRef, {
-            totalPurchase: currentTotal + tx.totalPrice,
-            updatedAt: dateStr
-          });
+          const currentClaims = customerSnap.data().claimedPromos || 0;
+          if (tx.claimPromoOnThisTx) {
+            const threshold = promoSnap.exists() ? (promoSnap.data().threshold ?? 500000) : 500000;
+            if (currentTotal < threshold) {
+              throw new Error("Akumulasi pembelian tidak mencukupi untuk klaim diskon promo!");
+            }
+            const newTotal = currentTotal - threshold + tx.totalPrice;
+            transaction.update(customerRef, {
+              totalPurchase: newTotal,
+              claimedPromos: currentClaims + 1,
+              updatedAt: dateStr
+            });
+          } else {
+            transaction.update(customerRef, {
+              totalPurchase: currentTotal + tx.totalPrice,
+              updatedAt: dateStr
+            });
+          }
         } else {
+          if (tx.claimPromoOnThisTx) {
+            throw new Error("Pelanggan baru belum memiliki akumulasi pembelian untuk klaim promo!");
+          }
           transaction.set(customerRef, {
             id: "cust_" + tx.customerName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_"),
             name: tx.customerName.trim(),
@@ -1006,63 +1027,104 @@ export function subscribeToCustomers(callback: (customers: Customer[]) => void) 
   });
 }
 
-export async function updatePromoThreshold(threshold: number) {
-  const promoRef = doc(db, "config", "promo");
-  await setDoc(promoRef, { threshold, updatedAt: new Date().toISOString() });
+export interface PromoConfig {
+  threshold: number;
+  discountAmount: number;
 }
 
-export function subscribeToPromoThreshold(callback: (threshold: number) => void) {
+export async function updatePromoConfig(threshold: number, discountAmount: number) {
+  const promoRef = doc(db, "config", "promo");
+  await setDoc(promoRef, { threshold, discountAmount, updatedAt: new Date().toISOString() });
+}
+
+export function subscribeToPromoConfig(callback: (config: PromoConfig) => void) {
   const promoRef = doc(db, "config", "promo");
   return onSnapshot(promoRef, (docSnap) => {
-    if (docSnap.exists() && docSnap.data().threshold !== undefined) {
-      callback(docSnap.data().threshold);
+    const defaultData = { threshold: 500000, discountAmount: 50000 };
+    if (docSnap.exists()) {
+      const data = docSnap.data();
+      callback({
+        threshold: data.threshold !== undefined ? data.threshold : defaultData.threshold,
+        discountAmount: data.discountAmount !== undefined ? data.discountAmount : defaultData.discountAmount
+      });
     } else {
-      callback(500000); // default 500,000 Rp
+      callback(defaultData);
     }
   });
 }
 
-export async function claimCustomerPromo(customerId: string, promoAmount: number) {
+export async function claimCustomerPromo(customerId: string, operatorEmail: string) {
   await runTransaction(db, async (transaction) => {
+    // 1. Fetch promo config
+    const promoRef = doc(db, "config", "promo");
+    const promoSnap = await transaction.get(promoRef);
+    const threshold = promoSnap.exists() ? (promoSnap.data().threshold ?? 500000) : 500000;
+    const discountAmount = promoSnap.exists() ? (promoSnap.data().discountAmount ?? 50000) : 50000;
+
+    // 2. Fetch customer
     const customerRef = doc(db, "customers", customerId);
     const customerSnap = await transaction.get(customerRef);
     if (!customerSnap.exists()) {
       throw new Error("Pelanggan tidak ditemukan!");
     }
     const currentTotal = customerSnap.data().totalPurchase;
-    if (currentTotal < promoAmount) {
-      throw new Error("Akumulasi pembelian tidak mencukupi untuk klaim promo!");
+    const customerName = customerSnap.data().name;
+    if (currentTotal < threshold) {
+      throw new Error(`Akumulasi pembelian tidak mencukupi untuk klaim promo! Minimal Rp ${threshold.toLocaleString("id-ID")}`);
     }
 
-    const newTotal = currentTotal - promoAmount;
+    const newTotal = currentTotal - threshold;
     const currentClaims = customerSnap.data().claimedPromos || 0;
 
-    // Update customer total & claim count
+    // 3. Update customer total & claim count
     transaction.update(customerRef, {
       totalPurchase: newTotal,
       claimedPromos: currentClaims + 1,
       updatedAt: new Date().toISOString()
     });
 
-    // Record cash mutation showing the claim as a promo reward mutation
+    // 4. Fetch cash config and update balance
     const cashRef = doc(db, "config", "cash");
     const cashSnap = await transaction.get(cashRef);
     let currentBalance = 15000000;
     if (cashSnap.exists()) {
       currentBalance = cashSnap.data().balance;
     }
+    const newBalance = currentBalance - discountAmount;
+    transaction.update(cashRef, { balance: newBalance });
 
+    // 5. Record cash mutation (outflow)
     const mutId = "mut_" + generateId();
     const mutationRef = doc(db, "cash_ledger", mutId);
     transaction.set(mutationRef, {
       id: mutId,
       date: new Date().toISOString(),
       type: "out",
-      amount: 0, // Promo claim itself has 0 impact on cash ledger balances
+      amount: discountAmount,
       balanceBefore: currentBalance,
-      balanceAfter: currentBalance,
-      description: `Klaim Promo Potongan Pelanggan: ${customerSnap.data().name} (Batas Minimal: Rp ${promoAmount.toLocaleString("id-ID")})`,
+      balanceAfter: newBalance,
+      description: `Klaim Promo Potongan Pelanggan: ${customerName} (Potongan Rp ${discountAmount.toLocaleString("id-ID")})`,
       referenceId: customerId
+    });
+
+    // 6. Record Transaction document so we can view and print it as an invoice!
+    const txId = "tx_" + generateId();
+    const txRef = doc(db, "transactions", txId);
+    transaction.set(txRef, {
+      id: txId,
+      type: "sale",
+      category: "other",
+      date: new Date().toISOString(),
+      scentName: "Klaim Promo Potongan",
+      volumeMl: 0,
+      bottleSize: "None",
+      bottleCount: 0,
+      totalPrice: -discountAmount, // Negative price since it's a discount
+      discountType: "nominal",
+      discountNominal: discountAmount,
+      description: `Klaim Diskon Promo secara Global oleh ${customerName}`,
+      operatorEmail: operatorEmail,
+      customerName: customerName
     });
   });
 }

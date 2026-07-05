@@ -44,6 +44,7 @@ export interface Transaction {
   description: string;
   operatorEmail: string;
   customerName?: string;
+  claimPromoOnThisTx?: boolean;
 }
 
 export interface Salary {

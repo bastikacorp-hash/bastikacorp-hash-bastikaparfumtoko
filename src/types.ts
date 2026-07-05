@@ -83,5 +83,6 @@ export interface InvoiceSettings {
   paperWidth: "58mm" | "80mm";
   logoUrl: string;
   showLogo: boolean;
+  appIconUrl?: string;
 }
 

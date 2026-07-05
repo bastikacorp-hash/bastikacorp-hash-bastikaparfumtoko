@@ -191,6 +191,10 @@ export function subscribeToPrices(callback: (prices: ScentPrice[]) => void) {
 
 // Update Master Price and cascade update to Shelves & Essence Stock names
 export async function updateScentPrice(scentName: string, newPrice: number) {
+  // Query shelves before the transaction to respect reads-before-writes
+  const shelvesQuery = query(collection(db, "shelves"), where("scentName", "==", scentName));
+  const shelvesSnap = await getDocs(shelvesQuery);
+
   await runTransaction(db, async (transaction) => {
     // 1. Update prices doc
     const priceRef = doc(db, "prices", scentName);
@@ -199,9 +203,7 @@ export async function updateScentPrice(scentName: string, newPrice: number) {
       updatedAt: new Date().toISOString() 
     });
 
-    // 2. Query shelves with this scent name and update their pricePerMl
-    const shelvesQuery = query(collection(db, "shelves"), where("scentName", "==", scentName));
-    const shelvesSnap = await getDocs(shelvesQuery);
+    // 2. Update their pricePerMl
     shelvesSnap.forEach((shelfDoc) => {
       transaction.update(doc(db, "shelves", shelfDoc.id), { pricePerMl: newPrice });
     });
@@ -248,27 +250,74 @@ export async function addTransaction(tx: Omit<Transaction, "id">) {
   const dateStr = tx.date || new Date().toISOString();
 
   await runTransaction(db, async (transaction) => {
-    // A. Fetch current cash balance
+    // ==========================================
+    // 1. PERFORM ALL READS FIRST (MANDATORY IN FIRESTORE TRANSACTIONS)
+    // ==========================================
+
+    // A. Cash Balance Ref & Read
     const cashRef = doc(db, "config", "cash");
     const cashSnap = await transaction.get(cashRef);
+
+    // B. Essence Stock Ref & Read
+    let essenceRef = null;
+    let essenceSnap = null;
+    if (tx.type === "sale") {
+      if (tx.scentName && (tx.volumeMl || 0) > 0) {
+        const essenceId = `essence_${tx.scentName.replace(/\s+/g, "_").toLowerCase()}`;
+        essenceRef = doc(db, "stocks", essenceId);
+        essenceSnap = await transaction.get(essenceRef);
+      }
+    } else if (tx.type === "purchase") {
+      if (tx.category === "bibit" && tx.scentName && (tx.volumeMl || 0) > 0) {
+        const essenceId = `essence_${tx.scentName.replace(/\s+/g, "_").toLowerCase()}`;
+        essenceRef = doc(db, "stocks", essenceId);
+        essenceSnap = await transaction.get(essenceRef);
+      }
+    }
+
+    // C. Scent Price Ref & Read (for purchase of a new bibit)
+    let priceRef = null;
+    let priceSnap = null;
+    if (tx.type === "purchase" && tx.category === "bibit" && tx.scentName) {
+      priceRef = doc(db, "prices", tx.scentName);
+      priceSnap = await transaction.get(priceRef);
+    }
+
+    // D. Alcohol Stock Ref & Read
+    const alcoholRef = doc(db, "stocks", "alcohol_main");
+    const alcoholSnap = await transaction.get(alcoholRef);
+
+    // E. Bottle Stock Ref & Read
+    let bottleRef = null;
+    let bottleSnap = null;
+    const bottleSize = tx.bottleSize || "None";
+    const bottleCount = tx.bottleCount || 0;
+    if (tx.type === "sale" && bottleSize !== "None" && bottleCount > 0) {
+      const bottleId = `bottle_${bottleSize}`;
+      bottleRef = doc(db, "stocks", bottleId);
+      bottleSnap = await transaction.get(bottleRef);
+    } else if (tx.type === "purchase" && tx.category === "botol" && bottleSize !== "None" && bottleCount > 0) {
+      const bottleId = `bottle_${bottleSize}`;
+      bottleRef = doc(db, "stocks", bottleId);
+      bottleSnap = await transaction.get(bottleRef);
+    }
+
+    // ==========================================
+    // 2. NOW PERFORM ALL WRITE OPERATIONS (SETS/UPDATES)
+    // ==========================================
+
     let currentBalance = 15000000; // default initial if config/cash doesn't exist yet
     if (cashSnap.exists()) {
       currentBalance = cashSnap.data().balance;
     }
 
-    // B. Perform stock checks and updates
     if (tx.type === "sale") {
       // PENJUALAN: mengurangi stok bibit, mengurangi stok botol, menambahkan kas
       const volumeToDeduct = tx.volumeMl || 0;
-      const bottleSize = tx.bottleSize || "None";
       const bottleCountToDeduct = tx.bottleCount || 0;
 
       // Deduct essence stock
-      if (tx.scentName && volumeToDeduct > 0) {
-        const essenceId = `essence_${tx.scentName.replace(/\s+/g, "_").toLowerCase()}`;
-        const essenceRef = doc(db, "stocks", essenceId);
-        const essenceSnap = await transaction.get(essenceRef);
-        
+      if (tx.scentName && volumeToDeduct > 0 && essenceRef && essenceSnap) {
         if (essenceSnap.exists()) {
           const currentQty = essenceSnap.data().quantity;
           if (currentQty < volumeToDeduct) {
@@ -276,17 +325,10 @@ export async function addTransaction(tx: Omit<Transaction, "id">) {
           }
           transaction.update(essenceRef, { quantity: currentQty - volumeToDeduct });
         } else {
-          // If essence stock doc doesn't exist, create it with negative or 0 balance check
           throw new Error(`Stok master bibit ${tx.scentName} tidak ditemukan!`);
         }
 
         // Deduct alcohol stock dynamically as bundling/free
-        // Typically, 1 ml of perfume needs some dilution. Assuming user input ml is the essence,
-        // and we might deduct a corresponding amount of alcohol if mixing.
-        // Let's assume alcohol deduction is equal to 0.5 * volumeToDeduct for mixing, or free bundling.
-        // Let's deduct 0.5 * volumeToDeduct from alcohol stock if available
-        const alcoholRef = doc(db, "stocks", "alcohol_main");
-        const alcoholSnap = await transaction.get(alcoholRef);
         if (alcoholSnap.exists()) {
           const alcoholQty = alcoholSnap.data().quantity;
           const alcoholDeduct = Math.round(volumeToDeduct * 0.5); // standard ratio
@@ -297,11 +339,7 @@ export async function addTransaction(tx: Omit<Transaction, "id">) {
       }
 
       // Deduct bottle stock
-      if (bottleSize !== "None" && bottleCountToDeduct > 0) {
-        const bottleId = `bottle_${bottleSize}`;
-        const bottleRef = doc(db, "stocks", bottleId);
-        const bottleSnap = await transaction.get(bottleRef);
-
+      if (bottleSize !== "None" && bottleCountToDeduct > 0 && bottleRef && bottleSnap) {
         if (bottleSnap.exists()) {
           const currentQty = bottleSnap.data().quantity;
           if (currentQty < bottleCountToDeduct) {
@@ -313,7 +351,7 @@ export async function addTransaction(tx: Omit<Transaction, "id">) {
         }
       }
 
-      // C. Update Cash Balance (Uang Masuk)
+      // Update Cash Balance (Uang Masuk)
       const newBalance = currentBalance + tx.totalPrice;
       if (cashSnap.exists()) {
         transaction.update(cashRef, { balance: newBalance });
@@ -321,7 +359,7 @@ export async function addTransaction(tx: Omit<Transaction, "id">) {
         transaction.set(cashRef, { balance: newBalance });
       }
 
-      // D. Record Cash Ledger Mutation
+      // Record Cash Ledger Mutation
       const mutId = "mut_" + generateId();
       const mutationRef = doc(db, "cash_ledger", mutId);
       transaction.set(mutationRef, {
@@ -338,7 +376,6 @@ export async function addTransaction(tx: Omit<Transaction, "id">) {
     } else if (tx.type === "purchase") {
       // PEMBELIAN: menambah stok bibit/alkohol/botol, mengurangi kas
       const volumeToAdd = tx.volumeMl || 0;
-      const bottleSize = tx.bottleSize || "None";
       const bottleCountToAdd = tx.bottleCount || 0;
 
       if (currentBalance < tx.totalPrice) {
@@ -346,39 +383,32 @@ export async function addTransaction(tx: Omit<Transaction, "id">) {
       }
 
       // Update essence stock
-      if (tx.category === "bibit" && tx.scentName && volumeToAdd > 0) {
-        const essenceId = `essence_${tx.scentName.replace(/\s+/g, "_").toLowerCase()}`;
-        const essenceRef = doc(db, "stocks", essenceId);
-        const essenceSnap = await transaction.get(essenceRef);
-        
+      if (tx.category === "bibit" && tx.scentName && volumeToAdd > 0 && essenceRef && essenceSnap) {
         if (essenceSnap.exists()) {
           transaction.update(essenceRef, { quantity: essenceSnap.data().quantity + volumeToAdd });
         } else {
           // Create new essence stock item
+          const essenceId = `essence_${tx.scentName.replace(/\s+/g, "_").toLowerCase()}`;
           transaction.set(essenceRef, {
             id: essenceId,
             type: "essence",
             scentName: tx.scentName,
             quantity: volumeToAdd
           });
-          
-          // Also check and create in price list if not exists
-          const priceRef = doc(db, "prices", tx.scentName);
-          const priceSnap = await transaction.get(priceRef);
-          if (!priceSnap.exists()) {
-            transaction.set(priceRef, {
-              scentName: tx.scentName,
-              pricePerMl: 3500, // starting default price if new
-              updatedAt: new Date().toISOString()
-            });
-          }
+        }
+
+        // Check and create in price list if not exists
+        if (priceRef && (!priceSnap || !priceSnap.exists())) {
+          transaction.set(priceRef, {
+            scentName: tx.scentName,
+            pricePerMl: 3500, // starting default price if new
+            updatedAt: new Date().toISOString()
+          });
         }
       }
 
       // Update alcohol stock
       if (tx.category === "alkohol" && volumeToAdd > 0) {
-        const alcoholRef = doc(db, "stocks", "alcohol_main");
-        const alcoholSnap = await transaction.get(alcoholRef);
         if (alcoholSnap.exists()) {
           transaction.update(alcoholRef, { quantity: alcoholSnap.data().quantity + volumeToAdd });
         } else {
@@ -391,16 +421,12 @@ export async function addTransaction(tx: Omit<Transaction, "id">) {
       }
 
       // Update bottle stock
-      if (tx.category === "botol" && bottleSize !== "None" && bottleCountToAdd > 0) {
-        const bottleId = `bottle_${bottleSize}`;
-        const bottleRef = doc(db, "stocks", bottleId);
-        const bottleSnap = await transaction.get(bottleRef);
-
+      if (tx.category === "botol" && bottleSize !== "None" && bottleCountToAdd > 0 && bottleRef && bottleSnap) {
         if (bottleSnap.exists()) {
           transaction.update(bottleRef, { quantity: bottleSnap.data().quantity + bottleCountToAdd });
         } else {
           transaction.set(bottleRef, {
-            id: bottleId,
+            id: `bottle_${bottleSize}`,
             type: "bottle",
             size: bottleSize,
             quantity: bottleCountToAdd
@@ -408,7 +434,7 @@ export async function addTransaction(tx: Omit<Transaction, "id">) {
         }
       }
 
-      // C. Update Cash Balance (Uang Keluar)
+      // Update Cash Balance (Uang Keluar)
       const newBalance = currentBalance - tx.totalPrice;
       if (cashSnap.exists()) {
         transaction.update(cashRef, { balance: newBalance });
@@ -416,7 +442,7 @@ export async function addTransaction(tx: Omit<Transaction, "id">) {
         transaction.set(cashRef, { balance: newBalance });
       }
 
-      // D. Record Cash Ledger Mutation
+      // Record Cash Ledger Mutation
       const mutId = "mut_" + generateId();
       const mutationRef = doc(db, "cash_ledger", mutId);
       transaction.set(mutationRef, {
@@ -431,7 +457,7 @@ export async function addTransaction(tx: Omit<Transaction, "id">) {
       });
     }
 
-    // E. Save transaction document
+    // Save transaction document
     const txRef = doc(db, "transactions", id);
     transaction.set(txRef, { ...tx, id, date: dateStr });
   });

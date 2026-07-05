@@ -1053,7 +1053,7 @@ export default function App() {
           
           <div className="flex flex-col items-center mb-6">
             <div className="h-16 w-16 bg-white rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-950/40 mb-3 transform hover:scale-105 transition-transform overflow-hidden p-1">
-              <img src="/icon.jpg" alt="Bastika Logo" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+              <img src={invoiceSettings?.appIconUrl || "/icon.jpg"} alt="Bastika Logo" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
             </div>
             <h1 className="text-2xl font-bold font-display text-white tracking-tight text-center">BASTIKA PARFUM</h1>
             <p className="text-emerald-400 font-semibold tracking-widest text-[10px] uppercase mt-0.5">Professional Management & POS</p>
@@ -1165,7 +1165,7 @@ export default function App() {
         <div className="p-6 border-b border-slate-800 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="h-9 w-9 bg-white rounded-xl flex items-center justify-center shadow-md overflow-hidden p-0.5">
-              <img src="/icon.jpg" alt="Bastika Logo" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+              <img src={invoiceSettings?.appIconUrl || "/icon.jpg"} alt="Bastika Logo" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
             </div>
             <div>
               <h2 className="font-bold font-display text-white tracking-tight text-sm">BASTIKA PARFUM</h2>
@@ -1833,12 +1833,25 @@ export default function App() {
 
                 {/* Rak List Table */}
                 <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm lg:col-span-2">
-                  <div className="flex items-center justify-between mb-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
                     <div>
                       <h3 className="font-bold text-sm text-slate-900">Tata Letak Posisi Rak Parfum</h3>
                       <p className="text-[11px] text-slate-500">Mencari letak nomor rak dan aroma parfum yang tersedia.</p>
                     </div>
-                    <span className="text-xs bg-slate-100 px-2.5 py-1 rounded-full font-semibold text-slate-600">{filteredShelves.length} rak</span>
+                    <div className="flex items-center gap-2">
+                      <div className="relative">
+                        <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-400" />
+                        <input
+                          id="inline-rack-search"
+                          type="text"
+                          placeholder="Cari aroma parfum / rak..."
+                          value={searchTerm}
+                          onChange={(e) => setSearchTerm(e.target.value)}
+                          className="bg-slate-50 focus:bg-white border border-slate-200 rounded-xl pl-9 pr-4 py-1.5 text-xs w-full sm:w-56 transition-all focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                        />
+                      </div>
+                      <span className="text-xs bg-slate-100 px-2.5 py-1.5 rounded-xl font-semibold text-slate-600 shrink-0">{filteredShelves.length} rak</span>
+                    </div>
                   </div>
 
                   <div className="overflow-x-auto">
@@ -2266,6 +2279,76 @@ export default function App() {
                     )}
                   </div>
                 </form>
+              </div>
+
+              {/* Daftar Penjualan Terbaru & Cetak Ulang Cepat */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4 animate-in fade-in slide-in-from-bottom-3 duration-300">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                  <div>
+                    <h3 className="font-bold text-sm text-slate-900 flex items-center gap-2">
+                      <Printer className="h-4.5 w-4.5 text-emerald-600" />
+                      Daftar Penjualan Terbaru (Print Preview & Cetak)
+                    </h3>
+                    <p className="text-[11px] text-slate-500">Pilih transaksi di bawah untuk menampilkan nota fisik serta melakukan cetak.</p>
+                  </div>
+                  <span className="text-[10px] bg-emerald-50 text-emerald-700 font-extrabold px-2.5 py-1 rounded-full border border-emerald-100 uppercase tracking-wider shrink-0 self-start sm:self-center">
+                    POS Terkoneksi Real-Time
+                  </span>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-100 text-slate-500 uppercase tracking-wider text-[10px] font-bold">
+                        <th className="py-2.5 px-4">Waktu Transaksi</th>
+                        <th className="py-2.5 px-4">Aroma Parfum & Takaran</th>
+                        <th className="py-2.5 px-4">Botol</th>
+                        <th className="py-2.5 px-4">Total Bayar</th>
+                        <th className="py-2.5 px-4 text-center">Aksi Nota</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {[...transactions]
+                        .filter(t => t.type === "sale")
+                        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                        .slice(0, 5)
+                        .map((t) => (
+                          <tr key={t.id} className="hover:bg-slate-50/50 transition-colors">
+                            <td className="py-2.5 px-4 font-semibold text-slate-500">
+                              {new Date(t.date).toLocaleDateString("id-ID", { day: "numeric", month: "short" })} - {new Date(t.date).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}
+                            </td>
+                            <td className="py-2.5 px-4 font-bold text-slate-800">
+                              {t.scentName} <span className="text-slate-400 font-normal">({t.volumeMl}ml)</span>
+                            </td>
+                            <td className="py-2.5 px-4 text-slate-600 font-medium">
+                              {t.bottleSize !== "None" ? `Botol ${t.bottleSize} (${t.bottleCount}x)` : "Refill / Tanpa Botol"}
+                            </td>
+                            <td className="py-2.5 px-4 font-mono font-bold text-emerald-700">
+                              {formatRupiah(t.totalPrice)}
+                            </td>
+                            <td className="py-2.5 px-4 text-center">
+                              <button
+                                type="button"
+                                onClick={() => setPrintTx(t)}
+                                className="bg-slate-900 hover:bg-emerald-600 hover:text-white text-slate-300 font-extrabold py-1.5 px-3.5 rounded-xl text-[10px] transition-all flex items-center gap-1.5 mx-auto cursor-pointer shadow-sm"
+                                title="Buka Print Preview & Cetak"
+                              >
+                                <Printer className="h-3 w-3 text-emerald-400" />
+                                Preview & Cetak
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      {transactions.filter(t => t.type === "sale").length === 0 && (
+                        <tr>
+                          <td colSpan={5} className="py-8 text-center text-slate-400 italic">
+                            Belum ada transaksi penjualan yang tercatat. Silakan lakukan penjualan di atas.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
 
             </div>
@@ -3132,13 +3215,30 @@ export default function App() {
                           <option value="80mm">Thermal 80mm (Standard Desktop)</option>
                         </select>
                       </div>
+
+                      <div className="flex items-center gap-3 pt-4">
+                        <input
+                          id="inv-show-logo"
+                          type="checkbox"
+                          checked={tempSettings.showLogo}
+                          onChange={(e) => handleSettingChange("showLogo", e.target.checked)}
+                          className="h-4 w-4 text-emerald-600 border-slate-300 rounded focus:ring-emerald-500 cursor-pointer"
+                        />
+                        <label htmlFor="inv-show-logo" className="text-xs font-bold text-slate-600 select-none cursor-pointer">
+                          Tampilkan Kop Gambar Logo pada Nota Invoice
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-slate-100 pt-4">
+                      {/* INVOICE LOGO UPLOADER */}
                       <div>
                         <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Upload Gambar Logo Nota (Real-time)</label>
                         <div className="flex items-center gap-3">
                           <label className="flex-1 flex flex-col items-center justify-center border border-dashed border-slate-300 hover:border-emerald-500 rounded-xl p-2 text-center cursor-pointer bg-slate-50 hover:bg-emerald-50/10 transition-all">
                             <div className="flex flex-col items-center gap-0.5">
                               <Upload className="h-4 w-4 text-slate-400" />
-                              <span className="text-[10px] font-bold text-slate-600">Pilih File Logo</span>
+                              <span className="text-[10px] font-bold text-slate-600">Pilih Logo Nota</span>
                             </div>
                             <input
                               type="file"
@@ -3158,7 +3258,7 @@ export default function App() {
                                   try {
                                     const updated = { ...tempSettings, logoUrl: dataUrl };
                                     await updateInvoiceSettings(updated);
-                                    showToast("Logo berhasil diupload & disimpan otomatis ke cloud!", "success");
+                                    showToast("Logo nota berhasil diupload & disimpan otomatis ke cloud!", "success");
                                   } catch (err: any) {
                                     showToast("Gagal simpan logo real-time: " + err.message, "error");
                                   }
@@ -3197,19 +3297,73 @@ export default function App() {
                           )}
                         </div>
                       </div>
-                    </div>
 
-                    <div className="flex items-center gap-3 pt-2">
-                      <input
-                        id="inv-show-logo"
-                        type="checkbox"
-                        checked={tempSettings.showLogo}
-                        onChange={(e) => handleSettingChange("showLogo", e.target.checked)}
-                        className="h-4 w-4 text-emerald-600 border-slate-300 rounded focus:ring-emerald-500 cursor-pointer"
-                      />
-                      <label htmlFor="inv-show-logo" className="text-xs font-bold text-slate-600 select-none cursor-pointer">
-                        Tampilkan Kop Gambar Logo pada Nota Invoice
-                      </label>
+                      {/* SYSTEM/APP ICON LOGO UPLOADER */}
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Upload Logo Aplikasi & Sistem (Real-time)</label>
+                        <div className="flex items-center gap-3">
+                          <label className="flex-1 flex flex-col items-center justify-center border border-dashed border-slate-300 hover:border-emerald-500 rounded-xl p-2 text-center cursor-pointer bg-slate-50 hover:bg-emerald-50/10 transition-all">
+                            <div className="flex flex-col items-center gap-0.5">
+                              <Upload className="h-4 w-4 text-slate-400" />
+                              <span className="text-[10px] font-bold text-slate-600">Pilih Logo Aplikasi</span>
+                            </div>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={async (e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+                                if (file.size > 300 * 1024) {
+                                  showToast("Ukuran logo maksimal 300KB agar sinkronisasi cloud lancar!", "error");
+                                  return;
+                                }
+                                const reader = new FileReader();
+                                reader.onloadend = async () => {
+                                  const dataUrl = reader.result as string;
+                                  handleSettingChange("appIconUrl", dataUrl);
+                                  // REAL-TIME SAVE to Firestore instantly
+                                  try {
+                                    const updated = { ...tempSettings, appIconUrl: dataUrl };
+                                    await updateInvoiceSettings(updated);
+                                    showToast("Logo Icon Aplikasi berhasil diupload & disimpan otomatis ke cloud!", "success");
+                                  } catch (err: any) {
+                                    showToast("Gagal simpan logo real-time: " + err.message, "error");
+                                  }
+                                };
+                                reader.readAsDataURL(file);
+                              }}
+                              className="hidden"
+                            />
+                          </label>
+                          {tempSettings.appIconUrl && (
+                            <div className="w-12 h-12 bg-slate-50 border border-slate-200 rounded-xl p-1 flex items-center justify-center relative shrink-0">
+                              <img
+                                src={tempSettings.appIconUrl}
+                                alt="App Icon Preview"
+                                className="max-w-full max-h-full object-contain rounded-md"
+                                referrerPolicy="no-referrer"
+                              />
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  handleSettingChange("appIconUrl", "/icon.jpg");
+                                  try {
+                                    const updated = { ...tempSettings, appIconUrl: "/icon.jpg" };
+                                    await updateInvoiceSettings(updated);
+                                    showToast("Logo aplikasi dikembalikan ke default & disimpan secara real-time!", "success");
+                                  } catch (err: any) {
+                                    showToast("Gagal reset logo: " + err.message, "error");
+                                  }
+                                }}
+                                className="absolute -top-1 -right-1 bg-rose-500 hover:bg-rose-600 text-white rounded-full p-0.5 shadow transition-all cursor-pointer"
+                                title="Reset logo default"
+                              >
+                                <X className="h-2 w-2" />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     </div>
 
                     <div className="pt-4 border-t border-slate-100 flex justify-end gap-3">
@@ -3247,11 +3401,11 @@ export default function App() {
 
                       <div className="text-center space-y-1.5 pt-4">
                         {tempSettings.showLogo && tempSettings.logoUrl && (
-                          <div className="flex justify-center mb-1">
+                          <div className="flex justify-center mb-1.5">
                             <img 
                               src={tempSettings.logoUrl} 
                               alt="Logo" 
-                              className="h-10 w-10 object-contain rounded-full border border-slate-200" 
+                              className="h-20 w-20 object-contain rounded-full border-2 border-slate-200 shadow-sm" 
                               referrerPolicy="no-referrer"
                               onError={(e) => {
                                 (e.currentTarget as HTMLImageElement).src = "/icon.jpg";
@@ -3343,11 +3497,11 @@ export default function App() {
               <div id="print-receipt-area" className="hidden print:block bg-white text-black font-mono text-[10px] leading-relaxed p-2 w-[280px] mx-auto">
                 <div className="text-center space-y-1">
                   {invoiceSettings.showLogo && invoiceSettings.logoUrl && (
-                    <div className="flex justify-center mb-1.5">
+                    <div className="flex justify-center mb-2">
                       <img 
                         src={invoiceSettings.logoUrl} 
                         alt="Kop Logo BASTIKA" 
-                        className="h-12 w-12 object-contain rounded-full border border-slate-200" 
+                        className="h-20 w-20 object-contain rounded-full border-2 border-slate-200 shadow-sm" 
                         referrerPolicy="no-referrer"
                         onError={(e) => {
                           (e.currentTarget as HTMLImageElement).src = "/icon.jpg";
@@ -3468,11 +3622,11 @@ export default function App() {
 
                     <div className="text-center space-y-1 pt-3">
                       {invoiceSettings.showLogo && invoiceSettings.logoUrl && (
-                        <div className="flex justify-center mb-1">
+                        <div className="flex justify-center mb-1.5">
                           <img 
                             src={invoiceSettings.logoUrl} 
                             alt="Logo Toko" 
-                            className="h-10 w-10 object-contain rounded-full border border-slate-200" 
+                            className="h-20 w-20 object-contain rounded-full border-2 border-slate-200 shadow-sm" 
                             referrerPolicy="no-referrer"
                             onError={(e) => {
                               (e.currentTarget as HTMLImageElement).src = "/icon.jpg";

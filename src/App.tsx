@@ -546,9 +546,30 @@ export default function App() {
     }
   };
 
-  const handleSettingChange = (field: keyof InvoiceSettings, value: any) => {
+  const handleSettingChange = async (field: keyof InvoiceSettings, value: any) => {
     if (tempSettings) {
-      setTempSettings({ ...tempSettings, [field]: value });
+      const updated = { ...tempSettings, [field]: value };
+      setTempSettings(updated);
+      setInvoiceSettings(updated); // Sync local invoiceSettings instantly for real-time print preview
+      
+      // Auto-save selects and checkboxes immediately to database
+      if (field === "paperWidth" || field === "showLogo") {
+        try {
+          await updateInvoiceSettings(updated);
+        } catch (err: any) {
+          console.error("Gagal auto-save settings:", err);
+        }
+      }
+    }
+  };
+
+  const handleSettingBlur = async () => {
+    if (tempSettings) {
+      try {
+        await updateInvoiceSettings(tempSettings);
+      } catch (err: any) {
+        console.error("Gagal auto-save settings on blur:", err);
+      }
     }
   };
 
@@ -1839,17 +1860,6 @@ export default function App() {
                       <p className="text-[11px] text-slate-500">Mencari letak nomor rak dan aroma parfum yang tersedia.</p>
                     </div>
                     <div className="flex items-center gap-2">
-                      <div className="relative">
-                        <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-400" />
-                        <input
-                          id="inline-rack-search"
-                          type="text"
-                          placeholder="Cari aroma parfum / rak..."
-                          value={searchTerm}
-                          onChange={(e) => setSearchTerm(e.target.value)}
-                          className="bg-slate-50 focus:bg-white border border-slate-200 rounded-xl pl-9 pr-4 py-1.5 text-xs w-full sm:w-56 transition-all focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                        />
-                      </div>
                       <span className="text-xs bg-slate-100 px-2.5 py-1.5 rounded-xl font-semibold text-slate-600 shrink-0">{filteredShelves.length} rak</span>
                     </div>
                   </div>
@@ -3121,6 +3131,7 @@ export default function App() {
                           type="text"
                           value={tempSettings.storeName}
                           onChange={(e) => handleSettingChange("storeName", e.target.value)}
+                          onBlur={handleSettingBlur}
                           className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
                           placeholder="BASTIKA PARFUM"
                           required
@@ -3133,6 +3144,7 @@ export default function App() {
                           type="text"
                           value={tempSettings.slogan}
                           onChange={(e) => handleSettingChange("slogan", e.target.value)}
+                          onBlur={handleSettingBlur}
                           className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
                           placeholder="THE PREMIUM SCENTS"
                         />
@@ -3146,6 +3158,7 @@ export default function App() {
                         rows={2}
                         value={tempSettings.address}
                         onChange={(e) => handleSettingChange("address", e.target.value)}
+                        onBlur={handleSettingBlur}
                         className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
                         placeholder="Jl. Merdeka No. 123, Bandung"
                         required
@@ -3160,6 +3173,7 @@ export default function App() {
                           type="text"
                           value={tempSettings.phone}
                           onChange={(e) => handleSettingChange("phone", e.target.value)}
+                          onBlur={handleSettingBlur}
                           className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
                           placeholder="0812-3456-7890"
                           required
@@ -3172,6 +3186,7 @@ export default function App() {
                           type="text"
                           value={tempSettings.headerMessage}
                           onChange={(e) => handleSettingChange("headerMessage", e.target.value)}
+                          onBlur={handleSettingBlur}
                           className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
                           placeholder="BUKTI PENJUALAN RESMI"
                         />
@@ -3185,6 +3200,7 @@ export default function App() {
                         type="text"
                         value={tempSettings.footerMessage1}
                         onChange={(e) => handleSettingChange("footerMessage1", e.target.value)}
+                        onBlur={handleSettingBlur}
                         className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
                         placeholder="Terima Kasih Atas Kunjungan Anda"
                       />
@@ -3197,6 +3213,7 @@ export default function App() {
                         type="text"
                         value={tempSettings.footerMessage2}
                         onChange={(e) => handleSettingChange("footerMessage2", e.target.value)}
+                        onBlur={handleSettingBlur}
                         className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
                         placeholder="Barang yang sudah dibeli tidak dapat ditukar."
                       />

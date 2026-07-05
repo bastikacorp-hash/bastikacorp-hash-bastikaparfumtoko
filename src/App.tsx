@@ -100,6 +100,7 @@ export default function App() {
   });
   const [userWhitelist, setUserWhitelist] = useState<UserProfile[]>([]);
   const [authLoading, setAuthLoading] = useState(true);
+  const [showLoadingFallback, setShowLoadingFallback] = useState(false);
 
   // Real Email/Password Auth State
   const [loginEmail, setLoginEmail] = useState("");
@@ -208,6 +209,29 @@ export default function App() {
       window.removeEventListener("offline", handleOffline);
     };
   }, []);
+
+  // Safety timeout to prevent infinite loading state (e.g. slow/unstable Firebase on Netlify)
+  useEffect(() => {
+    let timer1: any;
+    let timer2: any;
+    if (authLoading) {
+      setShowLoadingFallback(false);
+      // Show recovery/bypass buttons after 3 seconds of loading
+      timer1 = setTimeout(() => {
+        setShowLoadingFallback(true);
+      }, 3000);
+      
+      // Auto-bypass loading state after 6 seconds
+      timer2 = setTimeout(() => {
+        console.warn("Auth loading took too long, forcing authLoading to false.");
+        setAuthLoading(false);
+      }, 6000);
+    }
+    return () => {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+    };
+  }, [authLoading]);
 
   // 1. Authenticated User Listeners
   useEffect(() => {
@@ -1057,9 +1081,49 @@ export default function App() {
   // Render Login screen if not authenticated
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-600"></div>
-        <p className="mt-4 text-slate-600 font-medium">Memuat data Bastika Parfum...</p>
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-6 text-center text-white selection:bg-emerald-500 selection:text-white">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-emerald-500 mb-6"></div>
+        <h2 className="text-lg font-bold font-display tracking-tight">Memuat data Bastika Parfum...</h2>
+        <p className="mt-2 text-xs text-slate-400 max-w-xs leading-relaxed font-sans">
+          Sistem sedang menghubungkan ke basis data cloud Firebase. Mohon tunggu beberapa saat.
+        </p>
+        
+        {showLoadingFallback && (
+          <div className="mt-8 p-5 bg-slate-800 rounded-2xl border border-slate-700 max-w-sm w-full animate-in fade-in slide-in-from-bottom-4 duration-300 shadow-xl">
+            <p className="text-xs text-emerald-400 font-semibold mb-3">
+              Koneksi cloud lambat atau terhambat
+            </p>
+            <div className="flex flex-col gap-2.5">
+              <button
+                type="button"
+                onClick={() => setAuthLoading(false)}
+                className="w-full text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold py-2.5 px-4 rounded-xl transition-all cursor-pointer shadow-md"
+              >
+                Buka Halaman Login / Mode Darurat
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await signOut(auth);
+                    if (typeof window !== "undefined") {
+                      localStorage.removeItem("bastika_user_role");
+                    }
+                    setUserRole(null);
+                    setCurrentUser(null);
+                    setAuthLoading(false);
+                    window.location.reload();
+                  } catch (e) {
+                    console.error("Logout error:", e);
+                  }
+                }}
+                className="w-full text-xs bg-red-600/20 hover:bg-red-600/40 text-red-400 border border-red-500/30 font-bold py-2.5 px-4 rounded-xl transition-all cursor-pointer"
+              >
+                Keluar (Logout) & Reset Sesi
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

@@ -97,5 +97,11 @@ service cloud.firestore {
     match /cash_ledger/{ledgerId} {
       allow read, write: if isAdmin();
     }
+
+    // Customers / Pelanggan & Promo
+    match /customers/{customerId} {
+      allow read: if isWhitelisted();
+      allow write: if isWhitelisted();
+    }
   }
 }

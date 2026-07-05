@@ -1067,6 +1067,55 @@ export async function claimCustomerPromo(customerId: string, promoAmount: number
   });
 }
 
+export async function updateCustomerName(customerId: string, newName: string) {
+  const customerRef = doc(db, "customers", customerId);
+  const customerSnap = await getDoc(customerRef);
+  if (!customerSnap.exists()) {
+    throw new Error("Pelanggan tidak ditemukan!");
+  }
+  const oldName = customerSnap.data().name;
+  const trimmedNewName = newName.trim();
+  if (!trimmedNewName) {
+    throw new Error("Nama baru tidak boleh kosong!");
+  }
+
+  // 1. Update customer document name
+  await updateDoc(customerRef, {
+    name: trimmedNewName,
+    updatedAt: new Date().toISOString()
+  });
+
+  // 2. Query and update all transactions with the old name
+  const txQuery = query(collection(db, "transactions"), where("customerName", "==", oldName));
+  const txSnap = await getDocs(txQuery);
+  const batch = writeBatch(db);
+  txSnap.forEach((docSnap) => {
+    batch.update(docSnap.ref, { customerName: trimmedNewName });
+  });
+  await batch.commit();
+}
+
+export async function deleteCustomer(customerId: string) {
+  const customerRef = doc(db, "customers", customerId);
+  const customerSnap = await getDoc(customerRef);
+  if (!customerSnap.exists()) {
+    throw new Error("Pelanggan tidak ditemukan!");
+  }
+  const oldName = customerSnap.data().name;
+
+  // 1. Delete customer document
+  await deleteDoc(customerRef);
+
+  // 2. Query and update all transactions with the old name to "Pelanggan Umum"
+  const txQuery = query(collection(db, "transactions"), where("customerName", "==", oldName));
+  const txSnap = await getDocs(txQuery);
+  const batch = writeBatch(db);
+  txSnap.forEach((docSnap) => {
+    batch.update(docSnap.ref, { customerName: "Pelanggan Umum" });
+  });
+  await batch.commit();
+}
+
 // ==========================================
 // DATABASE BACKUP & RESTORE SERVICE (ADMIN ONLY)
 // ==========================================

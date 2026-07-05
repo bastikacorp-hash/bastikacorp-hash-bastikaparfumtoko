@@ -45,6 +45,8 @@ import {
   subscribeToPromoThreshold,
   updatePromoThreshold,
   claimCustomerPromo,
+  updateCustomerName,
+  deleteCustomer,
   exportDatabaseData,
   importDatabaseData,
   clearEntireDatabase
@@ -201,6 +203,8 @@ export default function App() {
   const [promoThreshold, setPromoThreshold] = useState<number>(500000);
   const [customerSearchTerm, setCustomerSearchTerm] = useState("");
   const [adminThresholdInput, setAdminThresholdInput] = useState<string>("500000");
+  const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
+  const [editingCustomerName, setEditingCustomerName] = useState<string>("");
 
 
   // Filter & Excel Export state variables
@@ -856,6 +860,38 @@ export default function App() {
         showToast(`Promo untuk ${customerName} berhasil diklaim!`, "success");
       } catch (err: any) {
         showToast(err.message || "Gagal mengklaim promo", "error");
+      }
+    }
+  };
+
+  const handleEditCustomerClick = (c: Customer) => {
+    setEditingCustomer(c);
+    setEditingCustomerName(c.name);
+  };
+
+  const handleSaveEditedCustomer = async () => {
+    if (!editingCustomer) return;
+    const trimmed = editingCustomerName.trim();
+    if (!trimmed) {
+      showToast("Nama pelanggan tidak boleh kosong!", "error");
+      return;
+    }
+    try {
+      await updateCustomerName(editingCustomer.id, trimmed);
+      showToast(`Nama pelanggan berhasil diperbarui menjadi "${trimmed}"!`, "success");
+      setEditingCustomer(null);
+    } catch (err: any) {
+      showToast(err.message || "Gagal mengubah nama pelanggan", "error");
+    }
+  };
+
+  const handleDeleteCustomer = async (customerId: string, customerName: string) => {
+    if (confirm(`Apakah Anda yakin ingin menghapus pelanggan "${customerName}"?\n\nTindakan ini akan menghapus data loyalitasnya, dan semua transaksi terkait atas nama ini akan diatur menjadi 'Pelanggan Umum'.`)) {
+      try {
+        await deleteCustomer(customerId);
+        showToast(`Pelanggan "${customerName}" berhasil dihapus dari database!`, "success");
+      } catch (err: any) {
+        showToast(err.message || "Gagal menghapus pelanggan", "error");
       }
     }
   };
@@ -2406,11 +2442,20 @@ export default function App() {
                     <input
                       id="sales-customer-input"
                       type="text"
+                      list="customer-suggestions"
                       placeholder="Masukkan nama pelanggan (kosongkan jika Pelanggan Umum)"
                       value={saleCustomerName}
                       onChange={(e) => setSaleCustomerName(e.target.value)}
                       className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800 font-medium"
                     />
+                    <datalist id="customer-suggestions">
+                      {customers.map((c) => (
+                        <option key={c.id} value={c.name} />
+                      ))}
+                    </datalist>
+                    <span className="text-[10px] text-slate-400 mt-1 block">
+                      💡 Ketik nama pelanggan. Jika pelanggan sudah pernah berbelanja, pilih dari daftar saran di atas untuk menghindari duplikasi penulisan.
+                    </span>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -2620,6 +2665,7 @@ export default function App() {
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-100 text-slate-500 uppercase tracking-wider text-[10px] font-bold">
                         <th className="py-2.5 px-4">Waktu Transaksi</th>
+                        <th className="py-2.5 px-4">Nama Pelanggan</th>
                         <th className="py-2.5 px-4">Aroma Parfum & Takaran</th>
                         <th className="py-2.5 px-4">Botol</th>
                         <th className="py-2.5 px-4">Total Bayar</th>
@@ -2635,6 +2681,9 @@ export default function App() {
                           <tr key={t.id} className="hover:bg-slate-50/50 transition-colors">
                             <td className="py-2.5 px-4 font-semibold text-slate-500">
                               {new Date(t.date).toLocaleDateString("id-ID", { day: "numeric", month: "short" })} - {new Date(t.date).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}
+                            </td>
+                            <td className="py-2.5 px-4 font-bold text-slate-700">
+                              {t.customerName || "Pelanggan Umum"}
                             </td>
                             <td className="py-2.5 px-4 font-bold text-slate-800">
                               {t.scentName} <span className="text-slate-400 font-normal">({t.volumeMl}ml)</span>
@@ -2660,7 +2709,7 @@ export default function App() {
                         ))}
                       {transactions.filter(t => t.type === "sale").length === 0 && (
                         <tr>
-                          <td colSpan={5} className="py-8 text-center text-slate-400 italic">
+                          <td colSpan={6} className="py-8 text-center text-slate-400 italic">
                             Belum ada transaksi penjualan yang tercatat. Silakan lakukan penjualan di atas.
                           </td>
                         </tr>
@@ -3925,6 +3974,9 @@ export default function App() {
                       <th className="py-3 px-4">Terakhir Update</th>
                       <th className="py-3 px-4 text-center">Status Promo</th>
                       <th className="py-3 px-4 text-center">Aksi Klaim</th>
+                      {userRole === "admin" && (
+                        <th className="py-3 px-4 text-center">Aksi Admin</th>
+                      )}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -3971,18 +4023,99 @@ export default function App() {
                               Klaim Promo
                             </button>
                           </td>
+                          {userRole === "admin" && (
+                            <td className="py-3.5 px-4 text-center">
+                              <div className="flex items-center justify-center gap-2">
+                                <button
+                                  onClick={() => handleEditCustomerClick(c)}
+                                  className="p-1.5 bg-slate-100 hover:bg-emerald-100 hover:text-emerald-700 rounded-lg text-slate-500 transition-colors cursor-pointer"
+                                  title="Edit Nama Pelanggan"
+                                >
+                                  <Edit3 className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteCustomer(c.id, c.name)}
+                                  className="p-1.5 bg-slate-100 hover:bg-rose-100 hover:text-rose-700 rounded-lg text-slate-500 transition-colors cursor-pointer"
+                                  title="Hapus Pelanggan"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            </td>
+                          )}
                         </tr>
                       );
                     })}
                     {customers.length === 0 && (
                       <tr>
-                        <td colSpan={6} className="py-8 text-center text-slate-400 italic">
+                        <td colSpan={userRole === "admin" ? 7 : 6} className="py-8 text-center text-slate-400 italic">
                           Belum ada data pelanggan tercatat. Transaksi kasir dengan mengisi nama pelanggan akan otomatis tercatat di sini.
                         </td>
                       </tr>
                     )}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          )}
+
+          {/* ==========================================
+              EDIT CUSTOMER MODAL OVERLAY (Admin Only)
+              ========================================== */}
+          {editingCustomer && (
+            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-3xl max-w-md w-full border border-slate-200 shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+                <div className="bg-slate-900 text-white p-5 flex items-center justify-between">
+                  <div>
+                    <h3 className="font-bold text-sm font-display">Edit Nama Pelanggan</h3>
+                    <p className="text-[10px] text-slate-400">Sesuaikan nama pelanggan. Semua riwayat transaksi akan otomatis disinkronkan.</p>
+                  </div>
+                  <button 
+                    onClick={() => setEditingCustomer(null)}
+                    className="text-slate-400 hover:text-white transition-colors cursor-pointer"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+                
+                <div className="p-6 space-y-4">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Nama Pelanggan Aktif</label>
+                    <div className="bg-slate-50 border border-slate-100 rounded-xl px-4 py-2.5 text-xs font-semibold text-slate-600">
+                      {editingCustomer.name}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Nama Pelanggan Baru</label>
+                    <input
+                      type="text"
+                      value={editingCustomerName}
+                      onChange={(e) => setEditingCustomerName(e.target.value)}
+                      placeholder="Masukkan nama baru..."
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800 font-bold"
+                    />
+                  </div>
+
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[10px] text-amber-800 leading-relaxed font-semibold">
+                    ⚠️ INFO SINKRONISASI: Mengubah nama di sini akan secara otomatis memperbarui nama pelanggan di semua transaksi penjualan lama yang terkait agar data laporan tetap akurat dan sinkron.
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 px-6 py-4 flex justify-end gap-3 border-t border-slate-100">
+                  <button
+                    onClick={() => setEditingCustomer(null)}
+                    className="border border-slate-200 text-slate-600 font-bold text-xs px-4 py-2 rounded-xl hover:bg-slate-100 transition-colors cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    onClick={handleSaveEditedCustomer}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs px-5 py-2 rounded-xl transition-all shadow-sm cursor-pointer"
+                  >
+                    Simpan Perubahan
+                  </button>
+                </div>
               </div>
             </div>
           )}

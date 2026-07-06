@@ -2608,7 +2608,7 @@ export default function App() {
                             Botol {b.size} ({formatRupiah(b.price)})
                           </option>
                         ))}
-                        <option value="None">Tanpa Botol (Hanya Refill)</option>
+                        <option value="None">Hanya Bibit</option>
                       </select>
                     </div>
 
@@ -2741,7 +2741,7 @@ export default function App() {
                         {saleScent ? `Bibit ${saleScent}: ${saleVolume}ml x Rp ${prices.find(p => p.scentName === saleScent)?.pricePerMl.toLocaleString() || '0'}` : '-- belum pilih aroma --'}<br />
                         {saleBottleSize !== "None" 
                           ? `${saleNoBottle ? 'Bawa Botol Sendiri' : `Botol ${saleBottleSize}`} x ${saleBottleCount}` 
-                          : "Hanya Refill"} (Absolut Free / Bundling)
+                          : "Hanya Bibit"} (Absolut Free / Bundling)
                       </p>
                     </div>
                     <div className="text-center sm:text-right bg-emerald-50 border border-emerald-200 rounded-xl px-5 py-2.5">
@@ -2820,7 +2820,7 @@ export default function App() {
                               {t.scentName} <span className="text-slate-400 font-normal">({t.volumeMl}ml)</span>
                             </td>
                             <td className="py-2.5 px-4 text-slate-600 font-medium">
-                              {t.bottleSize !== "None" ? `Botol ${t.bottleSize} (${t.bottleCount}x)` : "Refill / Tanpa Botol"}
+                              {t.bottleSize !== "None" ? `Botol ${t.bottleSize} (${t.bottleCount}x)` : "Hanya Bibit"}
                             </td>
                             <td className="py-2.5 px-4 font-mono font-bold text-emerald-700">
                               {formatRupiah(t.totalPrice)}

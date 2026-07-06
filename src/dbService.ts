@@ -515,7 +515,7 @@ export async function addTransaction(tx: Omit<Transaction, "id">) {
         amount: tx.totalPrice,
         balanceBefore: currentBalance,
         balanceAfter: newBalance,
-        description: `Pembelian stok: ${tx.category === "bibit" ? `Bibit ${tx.scentName}` : tx.category === "botol" ? `Botol ${tx.bottleSize}` : "Alkohol"}`,
+        description: `Pembelian stok: ${tx.category === "bibit" ? `Bibit ${tx.scentName}` : tx.category === "botol" ? `Botol ${tx.bottleSize}` : "Absolut"}`,
         referenceId: id
       });
     }
@@ -684,7 +684,7 @@ export async function deleteTransaction(id: string) {
         amount: tx.totalPrice,
         balanceBefore: currentBalance,
         balanceAfter: newBalance,
-        description: `Pembatalan Pembelian: ${tx.category === "bibit" ? `Bibit ${tx.scentName}` : tx.category === "botol" ? `Botol ${tx.bottleSize}` : "Alkohol"}`,
+        description: `Pembatalan Pembelian: ${tx.category === "bibit" ? `Bibit ${tx.scentName}` : tx.category === "botol" ? `Botol ${tx.bottleSize}` : "Absolut"}`,
         referenceId: id
       });
     }

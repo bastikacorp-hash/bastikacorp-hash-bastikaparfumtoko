@@ -321,6 +321,33 @@ export async function addTransaction(tx: Omit<Transaction, "id">) {
     const promoRef = doc(db, "config", "promo");
     const promoSnap = await transaction.get(promoRef);
 
+    // H. Multi-item Refs & Reads (Sales)
+    const essenceRefsMap: any = {};
+    const essenceSnapsMap: any = {};
+    const bottleRefsMap: any = {};
+    const bottleSnapsMap: any = {};
+
+    if (tx.type === "sale" && tx.items && tx.items.length > 0) {
+      for (const item of tx.items) {
+        if (item.scentName && (item.volumeMl || 0) > 0) {
+          const essenceId = `essence_${item.scentName.replace(/\s+/g, "_").toLowerCase()}`;
+          if (!essenceRefsMap[essenceId]) {
+            const ref = doc(db, "stocks", essenceId);
+            essenceRefsMap[essenceId] = ref;
+            essenceSnapsMap[essenceId] = await transaction.get(ref);
+          }
+        }
+        if (item.bottleSize && item.bottleSize !== "None" && (item.bottleCount || 0) > 0) {
+          const bottleId = `bottle_${item.bottleSize}`;
+          if (!bottleRefsMap[bottleId]) {
+            const ref = doc(db, "stocks", bottleId);
+            bottleRefsMap[bottleId] = ref;
+            bottleSnapsMap[bottleId] = await transaction.get(ref);
+          }
+        }
+      }
+    }
+
     // ==========================================
     // 2. NOW PERFORM ALL WRITE OPERATIONS (SETS/UPDATES)
     // ==========================================
@@ -331,51 +358,136 @@ export async function addTransaction(tx: Omit<Transaction, "id">) {
     }
 
     if (tx.type === "sale") {
-      // PENJUALAN: mengurangi stok bibit, mengurangi stok botol, menambahkan kas
-      const volumeToDeduct = tx.volumeMl || 0;
-      const bottleCountToDeduct = tx.bottleCount || 0;
+      let mutationDescription = "";
 
-      // Deduct essence stock
-      if (tx.scentName && volumeToDeduct > 0 && essenceRef && essenceSnap) {
-        if (essenceSnap.exists()) {
-          const currentQty = essenceSnap.data().quantity;
-          if (currentQty < volumeToDeduct) {
-            throw new Error(`Stok bibit ${tx.scentName} tidak mencukupi! Tersisa: ${currentQty} ml.`);
+      if (tx.items && tx.items.length > 0) {
+        // Multi-item sales stock deduction
+        const localEssenceStock: Record<string, number> = {};
+        const localBottleStock: Record<string, number> = {};
+
+        // Initialize local stocks from snapshot reads
+        Object.keys(essenceSnapsMap).forEach((essId) => {
+          const snap = essenceSnapsMap[essId];
+          localEssenceStock[essId] = snap.exists() ? snap.data().quantity : 0;
+        });
+
+        Object.keys(bottleSnapsMap).forEach((botId) => {
+          const snap = bottleSnapsMap[botId];
+          localBottleStock[botId] = snap.exists() ? snap.data().quantity : 0;
+        });
+
+        let totalAlcoholDeduct = 0;
+
+        for (const item of tx.items) {
+          const essenceId = `essence_${item.scentName.replace(/\s+/g, "_").toLowerCase()}`;
+          const volumeToDeduct = item.volumeMl || 0;
+          const bottleCountToDeduct = item.bottleCount || 0;
+          const bSize = item.bottleSize || "None";
+
+          // A. Essence Stock Deduction
+          if (item.scentName && volumeToDeduct > 0) {
+            const currentQty = localEssenceStock[essenceId] ?? 0;
+            if (currentQty < volumeToDeduct) {
+              throw new Error(`Stok bibit ${item.scentName} tidak mencukupi! Tersisa: ${currentQty} ml.`);
+            }
+            const updatedQty = currentQty - volumeToDeduct;
+            localEssenceStock[essenceId] = updatedQty;
+            const ref = essenceRefsMap[essenceId];
+            if (ref) {
+              transaction.update(ref, { quantity: updatedQty });
+            }
           }
-          transaction.update(essenceRef, { quantity: currentQty - volumeToDeduct });
-        } else {
-          throw new Error(`Stok master bibit ${tx.scentName} tidak ditemukan!`);
-        }
 
-        // Deduct alcohol stock dynamically: bottle size capacity minus essence volume, no deduction if 'Hanya Refill' (None)
-        let alcoholDeduct = 0;
-        if (bottleSize !== "None") {
-          const bottleCapacity = parseInt(bottleSize);
-          if (!isNaN(bottleCapacity)) {
-            const diff = bottleCapacity - volumeToDeduct;
-            if (diff > 0) {
-              alcoholDeduct = diff * bottleCountToDeduct;
+          // B. Alcohol Stock Calculation
+          if (bSize !== "None") {
+            const bottleCapacity = parseInt(bSize);
+            if (!isNaN(bottleCapacity)) {
+              const diff = bottleCapacity - volumeToDeduct;
+              if (diff > 0) {
+                totalAlcoholDeduct += diff * bottleCountToDeduct;
+              }
+            }
+          }
+
+          // C. Bottle Stock Deduction
+          if (!item.noBottleStockDeduct && bSize !== "None" && bottleCountToDeduct > 0) {
+            const bottleId = `bottle_${bSize}`;
+            const currentQty = localBottleStock[bottleId] ?? 0;
+            if (currentQty < bottleCountToDeduct) {
+              throw new Error(`Stok botol ukuran ${bSize} tidak mencukupi! Tersisa: ${currentQty} unit.`);
+            }
+            const updatedQty = currentQty - bottleCountToDeduct;
+            localBottleStock[bottleId] = updatedQty;
+            const ref = bottleRefsMap[bottleId];
+            if (ref) {
+              transaction.update(ref, { quantity: updatedQty });
             }
           }
         }
 
-        if (alcoholDeduct > 0 && alcoholSnap.exists()) {
+        // D. Final Alcohol Deduction
+        if (totalAlcoholDeduct > 0 && alcoholSnap.exists()) {
           const alcoholQty = alcoholSnap.data().quantity || 0;
-          transaction.update(alcoholRef, { quantity: Math.max(0, alcoholQty - alcoholDeduct) });
+          transaction.update(alcoholRef, { quantity: Math.max(0, alcoholQty - totalAlcoholDeduct) });
         }
-      }
 
-      // Deduct bottle stock
-      if (!tx.noBottleStockDeduct && bottleSize !== "None" && bottleCountToDeduct > 0 && bottleRef && bottleSnap) {
-        if (bottleSnap.exists()) {
-          const currentQty = bottleSnap.data().quantity;
-          if (currentQty < bottleCountToDeduct) {
-            throw new Error(`Stok botol ukuran ${bottleSize} tidak mencukupi! Tersisa: ${currentQty} unit.`);
-          }
-          transaction.update(bottleRef, { quantity: currentQty - bottleCountToDeduct });
-        } else {
-          throw new Error(`Stok master botol ${bottleSize} tidak ditemukan!`);
+        // Construct mutation description
+        mutationDescription = "Penjualan (Multi-item): " + tx.items.map(item => {
+          const bSizeStr = item.bottleSize !== "None" ? ` + Botol ${item.bottleSize} x ${item.bottleCount}` : " (Hanya Bibit)";
+          return `${item.scentName} (${item.volumeMl}ml)${bSizeStr}`;
+        }).join(", ");
+        if (mutationDescription.length > 250) {
+          mutationDescription = mutationDescription.substring(0, 247) + "...";
         }
+      } else {
+        // Fallback to original single-item stock deduction
+        const volumeToDeduct = tx.volumeMl || 0;
+        const bottleCountToDeduct = tx.bottleCount || 0;
+
+        // Deduct essence stock
+        if (tx.scentName && volumeToDeduct > 0 && essenceRef && essenceSnap) {
+          if (essenceSnap.exists()) {
+            const currentQty = essenceSnap.data().quantity;
+            if (currentQty < volumeToDeduct) {
+              throw new Error(`Stok bibit ${tx.scentName} tidak mencukupi! Tersisa: ${currentQty} ml.`);
+            }
+            transaction.update(essenceRef, { quantity: currentQty - volumeToDeduct });
+          } else {
+            throw new Error(`Stok master bibit ${tx.scentName} tidak ditemukan!`);
+          }
+
+          // Deduct alcohol stock dynamically: bottle size capacity minus essence volume, no deduction if 'Hanya Refill' (None)
+          let alcoholDeduct = 0;
+          if (bottleSize !== "None") {
+            const bottleCapacity = parseInt(bottleSize);
+            if (!isNaN(bottleCapacity)) {
+              const diff = bottleCapacity - volumeToDeduct;
+              if (diff > 0) {
+                alcoholDeduct = diff * bottleCountToDeduct;
+              }
+            }
+          }
+
+          if (alcoholDeduct > 0 && alcoholSnap.exists()) {
+            const alcoholQty = alcoholSnap.data().quantity || 0;
+            transaction.update(alcoholRef, { quantity: Math.max(0, alcoholQty - alcoholDeduct) });
+          }
+        }
+
+        // Deduct bottle stock
+        if (!tx.noBottleStockDeduct && bottleSize !== "None" && bottleCountToDeduct > 0 && bottleRef && bottleSnap) {
+          if (bottleSnap.exists()) {
+            const currentQty = bottleSnap.data().quantity;
+            if (currentQty < bottleCountToDeduct) {
+              throw new Error(`Stok botol ukuran ${bottleSize} tidak mencukupi! Tersisa: ${currentQty} unit.`);
+            }
+            transaction.update(bottleRef, { quantity: currentQty - bottleCountToDeduct });
+          } else {
+            throw new Error(`Stok master botol ${bottleSize} tidak ditemukan!`);
+          }
+        }
+
+        mutationDescription = `Penjualan: ${tx.scentName || "Parfum"} (${tx.volumeMl}ml) + Botol ${tx.bottleSize} x ${tx.bottleCount}`;
       }
 
       // Update Cash Balance (Uang Masuk)
@@ -396,7 +508,7 @@ export async function addTransaction(tx: Omit<Transaction, "id">) {
         amount: tx.totalPrice,
         balanceBefore: currentBalance,
         balanceAfter: newBalance,
-        description: `Penjualan: ${tx.scentName || "Parfum"} (${tx.volumeMl}ml) + Botol ${tx.bottleSize} x ${tx.bottleCount}`,
+        description: mutationDescription,
         referenceId: id
       });
 

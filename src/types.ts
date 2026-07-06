@@ -29,6 +29,15 @@ export interface StockItem {
   quantity: number; // in ml or units
 }
 
+export interface SaleItem {
+  id: string;
+  scentName: string;
+  volumeMl: number;
+  bottleSize: string; // "None" (Hanya Bibit) or size (e.g. "30ml", "50ml", "100ml")
+  bottleCount: number;
+  noBottleStockDeduct?: boolean;
+}
+
 export interface Transaction {
   id: string;
   type: "purchase" | "sale";
@@ -46,6 +55,7 @@ export interface Transaction {
   customerName?: string;
   claimPromoOnThisTx?: boolean;
   noBottleStockDeduct?: boolean;
+  items?: SaleItem[];
 }
 
 export interface Salary {

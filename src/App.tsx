@@ -62,7 +62,8 @@ import {
   UserRole,
   BottleSize,
   InvoiceSettings,
-  Customer
+  Customer,
+  SaleItem
 } from "./types";
 import { 
   ShoppingBag, 
@@ -174,6 +175,7 @@ export default function App() {
   const [saleCustomerName, setSaleCustomerName] = useState("");
   const [saleClaimPromo, setSaleClaimPromo] = useState<boolean>(false);
   const [saleNoBottle, setSaleNoBottle] = useState<boolean>(false);
+  const [saleItems, setSaleItems] = useState<SaleItem[]>([]);
 
   // Purchase stock state
   const [purchaseCategory, setPurchaseCategory] = useState<"bibit" | "alkohol" | "botol" | "other">("bibit");
@@ -451,33 +453,51 @@ export default function App() {
 
   // Price Calculation Logic for Sales
   useEffect(() => {
-    const matchedPrice = prices.find(p => p.scentName === saleScent);
-    const pricePerMl = matchedPrice ? matchedPrice.pricePerMl : 0;
-    
-    // Bottle rates: dynamic based on bottleSizes, None = Rp 0
-    let bottleFee = 0;
-    if (saleBottleSize !== "None") {
-      const matchedBottle = bottleSizes.find(b => b.size === saleBottleSize);
-      if (matchedBottle) {
-        bottleFee = matchedBottle.price;
+    let subtotal = 0;
+
+    if (saleItems.length > 0) {
+      subtotal = saleItems.reduce((acc, item) => {
+        const matchedPrice = prices.find(p => p.scentName === item.scentName);
+        const pricePerMl = matchedPrice ? matchedPrice.pricePerMl : 0;
+        let bottleFee = 0;
+        if (item.bottleSize !== "None") {
+          const matchedBottle = bottleSizes.find(b => b.size === item.bottleSize);
+          if (matchedBottle) {
+            bottleFee = matchedBottle.price;
+          }
+        }
+        if (item.noBottleStockDeduct || saleDiscountType === "free_bottle") {
+          bottleFee = 0;
+        }
+        const baseCost = (item.volumeMl * pricePerMl) + bottleFee;
+        return acc + (baseCost * item.bottleCount);
+      }, 0);
+    } else {
+      // Fallback to single item from form
+      const matchedPrice = prices.find(p => p.scentName === saleScent);
+      const pricePerMl = matchedPrice ? matchedPrice.pricePerMl : 0;
+      let bottleFee = 0;
+      if (saleBottleSize !== "None") {
+        const matchedBottle = bottleSizes.find(b => b.size === saleBottleSize);
+        if (matchedBottle) {
+          bottleFee = matchedBottle.price;
+        }
       }
+      if (saleDiscountType === "free_bottle" || saleNoBottle) {
+        bottleFee = 0;
+      }
+      const baseCost = (saleVolume * pricePerMl) + bottleFee;
+      subtotal = baseCost * saleBottleCount;
     }
 
-    // Apply "Free Bottle" discount by waiving the bottle fee or if bringing own bottle
-    if (saleDiscountType === "free_bottle" || saleNoBottle) {
-      bottleFee = 0;
-    }
-
-    const baseCost = (saleVolume * pricePerMl) + bottleFee;
-    let computedTotal = baseCost * saleBottleCount;
-
+    let computedTotal = subtotal;
     // Apply custom nominal discount
     if (saleDiscountType === "nominal") {
       computedTotal = Math.max(0, computedTotal - saleDiscountNominal);
     }
 
     setSaleTotalPrice(computedTotal);
-  }, [saleScent, saleVolume, saleBottleSize, saleBottleCount, prices, bottleSizes, saleDiscountType, saleDiscountNominal, saleNoBottle]);
+  }, [saleScent, saleVolume, saleBottleSize, saleBottleCount, saleItems, prices, bottleSizes, saleDiscountType, saleDiscountNominal, saleNoBottle]);
 
   // Currency Formatter helper (Indonesian Rupiah)
   const formatRupiah = (value: number) => {
@@ -666,81 +686,115 @@ export default function App() {
 
   const handleSalesSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const isHanyaBotol = saleScent === "Hanya Botol";
-
-    if (!saleScent) {
-      showToast("Harap pilih nama aroma!", "error");
-      return;
-    }
-    if (!isHanyaBotol && saleVolume <= 0) {
-      showToast("Volume bibit harus di atas 0 ml!", "error");
-      return;
-    }
-    if (isHanyaBotol && saleBottleSize === "None") {
-      showToast("Harap pilih ukuran botol jika hanya membeli botol!", "error");
-      return;
-    }
-    if (saleBottleCount <= 0) {
-      showToast("Jumlah botol minimal 1!", "error");
-      return;
-    }
-
-    const opEmail = currentUser?.email || customEmail || "client_operator@gmail.com";
-
-    let computedDiscount = 0;
-    if (saleDiscountType === "nominal") {
-      computedDiscount = saleDiscountNominal;
-    } else if (saleDiscountType === "free_bottle") {
-      const matchedBottle = bottleSizes.find(b => b.size === saleBottleSize);
-      if (matchedBottle) {
-        computedDiscount = matchedBottle.price * saleBottleCount;
+    
+    let finalItems = [...saleItems];
+    
+    // Fallback: If cart is empty, use current inputs as single item
+    if (finalItems.length === 0) {
+      const isHanyaBotol = saleScent === "Hanya Botol";
+      if (!saleScent) {
+        showToast("Harap pilih nama aroma atau tambahkan item ke daftar belanja terlebih dahulu!", "error");
+        return;
       }
-    }
-
-    try {
-      const txId = await addTransaction({
-        type: "sale",
-        category: isHanyaBotol ? "botol" : "bibit",
-        date: new Date().toISOString(),
+      if (!isHanyaBotol && saleVolume <= 0) {
+        showToast("Volume bibit harus di atas 0 ml!", "error");
+        return;
+      }
+      if (isHanyaBotol && saleBottleSize === "None") {
+        showToast("Harap pilih ukuran botol jika hanya membeli botol!", "error");
+        return;
+      }
+      if (saleBottleCount <= 0) {
+        showToast("Jumlah botol minimal 1!", "error");
+        return;
+      }
+      finalItems.push({
+        id: "item_" + Math.random().toString(36).substring(2, 9),
         scentName: saleScent,
         volumeMl: isHanyaBotol ? 0 : saleVolume,
         bottleSize: saleBottleSize,
         bottleCount: saleBottleCount,
+        noBottleStockDeduct: saleNoBottle
+      });
+    }
+
+    const opEmail = currentUser?.email || customEmail || "client_operator@gmail.com";
+
+    // Calculate total discount
+    let computedDiscount = 0;
+    if (saleDiscountType === "nominal") {
+      computedDiscount = saleDiscountNominal;
+    } else if (saleDiscountType === "free_bottle") {
+      computedDiscount = finalItems.reduce((acc, item) => {
+        if (item.bottleSize !== "None" && !item.noBottleStockDeduct) {
+          const matchedBottle = bottleSizes.find(b => b.size === item.bottleSize);
+          if (matchedBottle) {
+            return acc + (matchedBottle.price * item.bottleCount);
+          }
+        }
+        return acc;
+      }, 0);
+    }
+
+    // Determine representative legacy properties for compatibility
+    const firstItem = finalItems[0];
+    const isMulti = finalItems.length > 1;
+    const representativeScent = isMulti ? `Multi-item (${finalItems.length} aroma)` : firstItem.scentName;
+    const representativeVolume = finalItems.reduce((acc, it) => acc + (it.volumeMl || 0), 0);
+    const representativeBottleSize = isMulti ? "Multi-size" : firstItem.bottleSize;
+    const representativeBottleCount = finalItems.reduce((acc, it) => acc + (it.bottleCount || 0), 0);
+    const representativeNoBottle = finalItems.some(it => it.noBottleStockDeduct);
+
+    const itemsDescription = finalItems.map(item => {
+      const isHBotol = item.scentName === "Hanya Botol";
+      const bSizeStr = item.bottleSize !== "None" 
+        ? (item.noBottleStockDeduct ? ` + Bawa Botol Sendiri ${item.bottleSize}` : ` + Botol ${item.bottleSize}`)
+        : " (Hanya Bibit)";
+      return isHBotol 
+        ? `Botol ${item.bottleSize} x ${item.bottleCount}` 
+        : `${item.scentName} (${item.volumeMl}ml)${bSizeStr} x ${item.bottleCount}`;
+    }).join(", ");
+
+    const desc = saleDescription || `Penjualan: ${itemsDescription}${saleDiscountType !== 'none' ? ` (Diskon: ${saleDiscountType === 'free_bottle' ? 'Gratis Botol' : formatRupiah(computedDiscount)})` : ''}`;
+
+    try {
+      const txId = await addTransaction({
+        type: "sale",
+        category: finalItems.every(it => it.scentName === "Hanya Botol") ? "botol" : "bibit",
+        date: new Date().toISOString(),
+        scentName: representativeScent,
+        volumeMl: representativeVolume,
+        bottleSize: representativeBottleSize,
+        bottleCount: representativeBottleCount,
         totalPrice: saleTotalPrice,
         discountType: saleDiscountType,
         discountNominal: computedDiscount,
         claimPromoOnThisTx: saleClaimPromo,
-        noBottleStockDeduct: saleNoBottle,
-        description: saleDescription || (isHanyaBotol
-          ? `Penjualan Botol ${saleBottleSize} x ${saleBottleCount} (Hanya Botol)`
-          : saleNoBottle
-          ? `Penjualan bibit ${saleScent} (${saleVolume}ml) - Bawa Botol Sendiri ${saleBottleSize}${saleDiscountType !== 'none' ? ` (Diskon: ${saleDiscountType === 'free_bottle' ? 'Gratis Botol' : formatRupiah(computedDiscount)})` : ''}`
-          : `Penjualan bibit ${saleScent} (${saleVolume}ml) + Botol ${saleBottleSize}${saleDiscountType !== 'none' ? ` (Diskon: ${saleDiscountType === 'free_bottle' ? 'Gratis Botol' : formatRupiah(computedDiscount)})` : ''}`),
+        noBottleStockDeduct: representativeNoBottle,
+        description: desc,
         operatorEmail: opEmail,
-        customerName: saleCustomerName.trim() || "Pelanggan Umum"
+        customerName: saleCustomerName.trim() || "Pelanggan Umum",
+        items: finalItems
       });
 
       const newTx: Transaction = {
         id: txId,
         type: "sale",
-        category: isHanyaBotol ? "botol" : "bibit",
+        category: finalItems.every(it => it.scentName === "Hanya Botol") ? "botol" : "bibit",
         date: new Date().toISOString(),
-        scentName: saleScent,
-        volumeMl: isHanyaBotol ? 0 : saleVolume,
-        bottleSize: saleBottleSize,
-        bottleCount: saleBottleCount,
+        scentName: representativeScent,
+        volumeMl: representativeVolume,
+        bottleSize: representativeBottleSize,
+        bottleCount: representativeBottleCount,
         totalPrice: saleTotalPrice,
         discountType: saleDiscountType,
         discountNominal: computedDiscount,
         claimPromoOnThisTx: saleClaimPromo,
-        noBottleStockDeduct: saleNoBottle,
-        description: saleDescription || (isHanyaBotol
-          ? `Penjualan Botol ${saleBottleSize} x ${saleBottleCount} (Hanya Botol)`
-          : saleNoBottle
-          ? `Penjualan bibit ${saleScent} (${saleVolume}ml) - Bawa Botol Sendiri ${saleBottleSize}${saleDiscountType !== 'none' ? ` (Diskon: ${saleDiscountType === 'free_bottle' ? 'Gratis Botol' : formatRupiah(computedDiscount)})` : ''}`
-          : `Penjualan bibit ${saleScent} (${saleVolume}ml) + Botol ${saleBottleSize}${saleDiscountType !== 'none' ? ` (Diskon: ${saleDiscountType === 'free_bottle' ? 'Gratis Botol' : formatRupiah(computedDiscount)})` : ''}`),
+        noBottleStockDeduct: representativeNoBottle,
+        description: desc,
         operatorEmail: opEmail,
-        customerName: saleCustomerName.trim() || "Pelanggan Umum"
+        customerName: saleCustomerName.trim() || "Pelanggan Umum",
+        items: finalItems
       };
       
       showToast("Transaksi Penjualan berhasil disimpan! Stok berkurang otomatis.", "success");
@@ -757,6 +811,7 @@ export default function App() {
       setSaleCustomerName("");
       setSaleClaimPromo(false);
       setSaleNoBottle(false);
+      setSaleItems([]);
     } catch (err: any) {
       showToast(err.message || "Gagal mencatat penjualan", "error");
     }
@@ -2654,6 +2709,125 @@ export default function App() {
                     )}
                   </div>
 
+                  {/* Tambah ke Daftar Item Belanja Button */}
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const isHanyaBotol = saleScent === "Hanya Botol";
+                        if (!saleScent) {
+                          showToast("Harap pilih nama aroma!", "error");
+                          return;
+                        }
+                        if (!isHanyaBotol && saleVolume <= 0) {
+                          showToast("Volume bibit harus di atas 0 ml!", "error");
+                          return;
+                        }
+                        if (isHanyaBotol && saleBottleSize === "None") {
+                          showToast("Harap pilih ukuran botol jika hanya membeli botol!", "error");
+                          return;
+                        }
+                        if (saleBottleCount <= 0) {
+                          showToast("Jumlah botol minimal 1!", "error");
+                          return;
+                        }
+
+                        // Add to state
+                        const newItem: SaleItem = {
+                          id: "item_" + Math.random().toString(36).substring(2, 9),
+                          scentName: saleScent,
+                          volumeMl: isHanyaBotol ? 0 : saleVolume,
+                          bottleSize: saleBottleSize,
+                          bottleCount: saleBottleCount,
+                          noBottleStockDeduct: saleNoBottle
+                        };
+
+                        setSaleItems(prev => [...prev, newItem]);
+                        showToast(`Berhasil menambahkan ${saleScent} ke daftar belanja!`, "success");
+
+                        // Reset item inputs while keeping customer name etc
+                        setSaleScent("");
+                        setSaleVolume(0);
+                        setSaleBottleCount(1);
+                        setSaleNoBottle(false);
+                      }}
+                      className="w-full bg-emerald-50 hover:bg-emerald-100/80 active:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl py-3 px-4 text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm hover:shadow"
+                    >
+                      <Plus className="h-4 w-4" />
+                      Tambah ke Daftar Item Belanja
+                    </button>
+                  </div>
+
+                  {/* Daftar Item Belanja (Cart List) */}
+                  {saleItems.length > 0 && (
+                    <div className="bg-slate-50/50 border border-slate-200/60 rounded-2xl p-4 space-y-3">
+                      <div className="flex items-center justify-between border-b border-slate-200/50 pb-2">
+                        <span className="text-xs font-bold text-slate-700 flex items-center gap-2">
+                          <ShoppingBag className="h-4 w-4 text-emerald-600" />
+                          Daftar Item Belanja ({saleItems.length})
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSaleItems([]);
+                            showToast("Daftar item belanja dibersihkan.", "success");
+                          }}
+                          className="text-[10px] text-red-500 hover:text-red-700 font-bold hover:underline cursor-pointer"
+                        >
+                          Hapus Semua
+                        </button>
+                      </div>
+                      
+                      <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                        {saleItems.map((item, idx) => {
+                          const isHB = item.scentName === "Hanya Botol";
+                          const matchedPrice = prices.find(p => p.scentName === item.scentName);
+                          const pPerMl = matchedPrice ? matchedPrice.pricePerMl : 0;
+                          let bFee = 0;
+                          if (item.bottleSize !== "None") {
+                            const matchedB = bottleSizes.find(b => b.size === item.bottleSize);
+                            if (matchedB) bFee = matchedB.price;
+                          }
+                          if (item.noBottleStockDeduct || saleDiscountType === "free_bottle") {
+                            bFee = 0;
+                          }
+                          const itemCost = ((item.volumeMl * pPerMl) + bFee) * item.bottleCount;
+
+                          return (
+                            <div key={item.id || idx} className="flex items-center justify-between bg-white border border-slate-100 rounded-xl p-3 shadow-sm hover:shadow transition-shadow">
+                              <div className="text-left space-y-1">
+                                <div className="text-xs font-bold text-slate-800">
+                                  {item.scentName}
+                                </div>
+                                <div className="text-[10px] text-slate-500 flex flex-wrap gap-x-2 gap-y-0.5">
+                                  {!isHB && <span>Vol: <strong className="text-slate-700">{item.volumeMl}ml</strong></span>}
+                                  <span>Botol: <strong className="text-slate-700">{item.bottleSize !== "None" ? `${item.bottleSize}` : "Tanpa Botol"}</strong></span>
+                                  <span>Qty: <strong className="text-slate-700">{item.bottleCount}x</strong></span>
+                                  {item.noBottleStockDeduct && <span className="bg-amber-50 text-amber-700 px-1 py-0.5 rounded text-[8px] font-bold">Bawa Botol</span>}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <span className="text-xs font-bold text-slate-700">
+                                  {formatRupiah(itemCost)}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSaleItems(prev => prev.filter(it => it.id !== item.id));
+                                    showToast(`Menghapus ${item.scentName} dari daftar belanja.`);
+                                  }}
+                                  className="text-slate-400 hover:text-red-500 transition-colors p-1 rounded-lg hover:bg-red-50 cursor-pointer"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Optional Description / Memo */}
                   <div>
                     <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Keterangan / Catatan Transaksi (Opsional)</label>
@@ -2867,10 +3041,36 @@ export default function App() {
                               {t.customerName || "Pelanggan Umum"}
                             </td>
                             <td className="py-2.5 px-4 font-bold text-slate-800">
-                              {t.scentName} <span className="text-slate-400 font-normal">({t.volumeMl}ml)</span>
+                              {t.items && t.items.length > 0 ? (
+                                <div className="space-y-1">
+                                  {t.items.map((it, idx) => (
+                                    <div key={it.id || idx} className="text-xs">
+                                      <span className="font-bold text-slate-800">{it.scentName}</span>{" "}
+                                      <span className="text-slate-400 font-normal">({it.volumeMl}ml)</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <>
+                                  {t.scentName} <span className="text-slate-400 font-normal">({t.volumeMl}ml)</span>
+                                </>
+                              )}
                             </td>
                             <td className="py-2.5 px-4 text-slate-600 font-medium">
-                              {t.bottleSize !== "None" ? `Botol ${t.bottleSize} (${t.bottleCount}x)` : "Hanya Bibit"}
+                              {t.items && t.items.length > 0 ? (
+                                <div className="space-y-1">
+                                  {t.items.map((it, idx) => (
+                                    <div key={it.id || idx} className="text-xs text-slate-500">
+                                      {it.bottleSize !== "None" 
+                                        ? `${it.noBottleStockDeduct ? "Bawa" : "Botol"} ${it.bottleSize} (${it.bottleCount}x)` 
+                                        : "Hanya Bibit"
+                                      }
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                t.bottleSize !== "None" ? `Botol ${t.bottleSize} (${t.bottleCount}x)` : "Hanya Bibit"
+                              )}
                             </td>
                             <td className="py-2.5 px-4 font-mono font-bold text-emerald-700">
                               {formatRupiah(t.totalPrice)}
@@ -3626,7 +3826,7 @@ export default function App() {
                         <td className="py-3 px-4">
                           <div className="font-semibold text-slate-800">{t.description}</div>
                           <span className="text-[10px] text-slate-400">
-                            ID: {t.id} {t.volumeMl ? `| Volume: ${t.volumeMl}ml` : ""} {t.bottleSize && t.bottleSize !== "None" ? `| Botol: ${t.bottleSize} (${t.bottleCount}x)` : ""}
+                            ID: {t.id} {t.items && t.items.length > 0 ? `| Multi-item (${t.items.length} macam)` : `${t.volumeMl ? `| Volume: ${t.volumeMl}ml` : ""} ${t.bottleSize && t.bottleSize !== "None" ? `| Botol: ${t.bottleSize} (${t.bottleCount}x)` : ""}`}
                           </span>
                         </td>
                         <td className="py-3 px-4 text-slate-600 font-medium">{t.operatorEmail}</td>
@@ -4475,6 +4675,57 @@ export default function App() {
                         <span>Penukaran Akumulasi Loyalitas</span>
                       </div>
                     </div>
+                  ) : printTx.items && printTx.items.length > 0 ? (
+                    <div className="space-y-2">
+                      {printTx.items.map((item, index) => {
+                        const isHB = item.scentName === "Hanya Botol";
+                        const mPrice = prices.find(p => p.scentName === item.scentName);
+                        const pPerMl = mPrice ? mPrice.pricePerMl : 0;
+                        const scentCost = isHB ? 0 : ((item.volumeMl || 0) * pPerMl * (item.bottleCount || 1));
+                        
+                        let bPrice = 0;
+                        if (item.bottleSize !== "None") {
+                          const mBot = bottleSizes.find(b => b.size === item.bottleSize);
+                          if (mBot) bPrice = mBot.price;
+                        }
+                        if (item.noBottleStockDeduct || printTx.discountType === "free_bottle") {
+                          bPrice = 0;
+                        }
+                        const bottleCost = bPrice * (item.bottleCount || 1);
+
+                        return (
+                          <div key={item.id || index} className="border-b border-dotted border-slate-200/50 pb-1.5 last:border-b-0 last:pb-0">
+                            {/* Scent Row */}
+                            {!isHB && (item.volumeMl || 0) > 0 && (
+                              <div className="text-[8px] space-y-0.5">
+                                <div className="flex justify-between font-bold">
+                                  <span>{item.scentName} ({item.volumeMl}ml)</span>
+                                  <span>Rp {scentCost.toLocaleString("id-ID")}</span>
+                                </div>
+                                <div className="flex justify-between text-[7px] text-slate-500 pl-2">
+                                  <span>{item.volumeMl}ml x Rp {pPerMl.toLocaleString("id-ID")}/ml x {item.bottleCount}x</span>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Bottle Row */}
+                            {item.bottleSize && item.bottleSize !== "None" && (
+                              <div className="text-[8px] pt-0.5 flex justify-between">
+                                <span className="text-slate-600">
+                                  {item.noBottleStockDeduct 
+                                    ? `Botol ${item.bottleSize} (${item.bottleCount} pcs) - Bawa Sendiri`
+                                    : `Botol ${item.bottleSize} (${item.bottleCount} pcs)`
+                                  }
+                                </span>
+                                <span>
+                                  Rp {bottleCost.toLocaleString("id-ID")}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   ) : (
                     <>
                       {/* Scent Row */}
@@ -4517,6 +4768,23 @@ export default function App() {
                     <span>
                       Rp {(printTx.scentName === "Klaim Promo Potongan"
                         ? printTx.discountNominal
+                        : printTx.items && printTx.items.length > 0
+                        ? printTx.items.reduce((acc, item) => {
+                            const isHB = item.scentName === "Hanya Botol";
+                            const mPrice = prices.find(p => p.scentName === item.scentName);
+                            const pPerMl = mPrice ? mPrice.pricePerMl : 0;
+                            const scentCost = isHB ? 0 : ((item.volumeMl || 0) * pPerMl);
+                            
+                            let bPrice = 0;
+                            if (item.bottleSize !== "None") {
+                              const mBot = bottleSizes.find(b => b.size === item.bottleSize);
+                              if (mBot) bPrice = mBot.price;
+                            }
+                            if (item.noBottleStockDeduct || printTx.discountType === "free_bottle") {
+                              bPrice = 0;
+                            }
+                            return acc + ((scentCost + bPrice) * (item.bottleCount || 1));
+                          }, 0)
                         : (((printTx.volumeMl || 0) * (prices.find(p => p.scentName === printTx.scentName)?.pricePerMl || 3500) * (printTx.bottleCount || 1)) +
                            ((printTx.bottleSize && printTx.bottleSize !== "None" && !printTx.noBottleStockDeduct ? (bottleSizes.find(b => b.size === printTx.bottleSize)?.price || 0) : 0) * (printTx.bottleCount || 1)))
                       ).toLocaleString("id-ID")}
@@ -4639,6 +4907,57 @@ export default function App() {
                             <span>Penukaran Akumulasi Loyalitas</span>
                           </div>
                         </div>
+                      ) : printTx.items && printTx.items.length > 0 ? (
+                        <div className="space-y-1.5">
+                          {printTx.items.map((item, index) => {
+                            const isHB = item.scentName === "Hanya Botol";
+                            const mPrice = prices.find(p => p.scentName === item.scentName);
+                            const pPerMl = mPrice ? mPrice.pricePerMl : 0;
+                            const scentCost = isHB ? 0 : ((item.volumeMl || 0) * pPerMl * (item.bottleCount || 1));
+                            
+                            let bPrice = 0;
+                            if (item.bottleSize !== "None") {
+                              const mBot = bottleSizes.find(b => b.size === item.bottleSize);
+                              if (mBot) bPrice = mBot.price;
+                            }
+                            if (item.noBottleStockDeduct || printTx.discountType === "free_bottle") {
+                              bPrice = 0;
+                            }
+                            const bottleCost = bPrice * (item.bottleCount || 1);
+
+                            return (
+                              <div key={item.id || index} className="border-b border-dotted border-slate-200/50 pb-1 last:border-b-0 last:pb-0">
+                                {/* Scent Row */}
+                                {!isHB && (item.volumeMl || 0) > 0 && (
+                                  <div className="text-[7px] text-slate-800 space-y-0.5">
+                                    <div className="flex justify-between font-semibold">
+                                      <span>{item.scentName} ({item.volumeMl}ml)</span>
+                                      <span>Rp {scentCost.toLocaleString("id-ID")}</span>
+                                    </div>
+                                    <div className="flex justify-between text-[6px] text-slate-500 pl-1">
+                                      <span>{item.volumeMl}ml x Rp {pPerMl.toLocaleString("id-ID")}/ml x {item.bottleCount}x</span>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Bottle Row */}
+                                {item.bottleSize && item.bottleSize !== "None" && (
+                                  <div className="text-[7px] pt-0.5 flex justify-between text-slate-800">
+                                    <span className="text-slate-600">
+                                      {item.noBottleStockDeduct 
+                                        ? `Botol ${item.bottleSize} (${item.bottleCount} pcs) - Bawa Sendiri`
+                                        : `Botol ${item.bottleSize} (${item.bottleCount} pcs)`
+                                      }
+                                    </span>
+                                    <span>
+                                      Rp {bottleCost.toLocaleString("id-ID")}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
                       ) : (
                         <>
                           <div className="text-[7px] text-slate-800 space-y-0.5">
@@ -4679,6 +4998,23 @@ export default function App() {
                         <span>
                           Rp {(printTx.scentName === "Klaim Promo Potongan"
                             ? printTx.discountNominal
+                            : printTx.items && printTx.items.length > 0
+                            ? printTx.items.reduce((acc, item) => {
+                                const isHB = item.scentName === "Hanya Botol";
+                                const mPrice = prices.find(p => p.scentName === item.scentName);
+                                const pPerMl = mPrice ? mPrice.pricePerMl : 0;
+                                const scentCost = isHB ? 0 : ((item.volumeMl || 0) * mPrice!.pricePerMl);
+                                
+                                let bPrice = 0;
+                                if (item.bottleSize !== "None") {
+                                  const mBot = bottleSizes.find(b => b.size === item.bottleSize);
+                                  if (mBot) bPrice = mBot.price;
+                                }
+                                if (item.noBottleStockDeduct || printTx.discountType === "free_bottle") {
+                                  bPrice = 0;
+                                }
+                                return acc + ((scentCost + bPrice) * (item.bottleCount || 1));
+                              }, 0)
                             : (((printTx.volumeMl || 0) * (prices.find(p => p.scentName === printTx.scentName)?.pricePerMl || 3500) * (printTx.bottleCount || 1)) +
                                ((printTx.bottleSize && printTx.bottleSize !== "None" && !printTx.noBottleStockDeduct ? (bottleSizes.find(b => b.size === printTx.bottleSize)?.price || 0) : 0) * (printTx.bottleCount || 1)))
                           ).toLocaleString("id-ID")}

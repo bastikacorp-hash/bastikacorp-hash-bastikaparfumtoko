@@ -250,6 +250,10 @@ export async function addTransaction(tx: Omit<Transaction, "id">) {
   const id = "tx_" + generateId();
   const dateStr = tx.date || new Date().toISOString();
 
+  if (tx.scentName) {
+    tx.scentName = tx.scentName.trim();
+  }
+
   await runTransaction(db, async (transaction) => {
     // ==========================================
     // 1. PERFORM ALL READS FIRST (MANDATORY IN FIRESTORE TRANSACTIONS)
@@ -343,18 +347,26 @@ export async function addTransaction(tx: Omit<Transaction, "id">) {
           throw new Error(`Stok master bibit ${tx.scentName} tidak ditemukan!`);
         }
 
-        // Deduct alcohol stock dynamically as bundling/free
-        if (alcoholSnap.exists()) {
-          const alcoholQty = alcoholSnap.data().quantity;
-          const alcoholDeduct = Math.round(volumeToDeduct * 0.5); // standard ratio
-          if (alcoholQty >= alcoholDeduct) {
-            transaction.update(alcoholRef, { quantity: alcoholQty - alcoholDeduct });
+        // Deduct alcohol stock dynamically: bottle size capacity minus essence volume, no deduction if 'Hanya Refill' (None)
+        let alcoholDeduct = 0;
+        if (bottleSize !== "None") {
+          const bottleCapacity = parseInt(bottleSize);
+          if (!isNaN(bottleCapacity)) {
+            const diff = bottleCapacity - volumeToDeduct;
+            if (diff > 0) {
+              alcoholDeduct = diff * bottleCountToDeduct;
+            }
           }
+        }
+
+        if (alcoholDeduct > 0 && alcoholSnap.exists()) {
+          const alcoholQty = alcoholSnap.data().quantity || 0;
+          transaction.update(alcoholRef, { quantity: Math.max(0, alcoholQty - alcoholDeduct) });
         }
       }
 
       // Deduct bottle stock
-      if (bottleSize !== "None" && bottleCountToDeduct > 0 && bottleRef && bottleSnap) {
+      if (!tx.noBottleStockDeduct && bottleSize !== "None" && bottleCountToDeduct > 0 && bottleRef && bottleSnap) {
         if (bottleSnap.exists()) {
           const currentQty = bottleSnap.data().quantity;
           if (currentQty < bottleCountToDeduct) {
@@ -1054,7 +1066,7 @@ export function subscribeToPromoConfig(callback: (config: PromoConfig) => void) 
 }
 
 export async function claimCustomerPromo(customerId: string, operatorEmail: string) {
-  await runTransaction(db, async (transaction) => {
+  return await runTransaction(db, async (transaction) => {
     // 1. Fetch promo config (Read)
     const promoRef = doc(db, "config", "promo");
     const promoSnap = await transaction.get(promoRef);
@@ -1122,22 +1134,25 @@ export async function claimCustomerPromo(customerId: string, operatorEmail: stri
     // D. Record Transaction document so we can view and print it as an invoice!
     const txId = "tx_" + generateId();
     const txRef = doc(db, "transactions", txId);
-    transaction.set(txRef, {
+    const newTx = {
       id: txId,
-      type: "sale",
-      category: "other",
+      type: "sale" as const,
+      category: "other" as const,
       date: new Date().toISOString(),
       scentName: "Klaim Promo Potongan",
       volumeMl: 0,
       bottleSize: "None",
       bottleCount: 0,
       totalPrice: -discountAmount, // Negative price since it's a discount
-      discountType: "nominal",
+      discountType: "nominal" as const,
       discountNominal: discountAmount,
       description: `Klaim Diskon Promo secara Global oleh ${customerName}`,
       operatorEmail: operatorEmail,
       customerName: customerName
-    });
+    };
+    transaction.set(txRef, newTx);
+
+    return newTx;
   });
 }
 

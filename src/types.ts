@@ -45,6 +45,7 @@ export interface Transaction {
   operatorEmail: string;
   customerName?: string;
   claimPromoOnThisTx?: boolean;
+  noBottleStockDeduct?: boolean;
 }
 
 export interface Salary {

@@ -172,6 +172,8 @@ export default function App() {
   const [saleDiscountType, setSaleDiscountType] = useState<"none" | "free_bottle" | "nominal">("none");
   const [saleDiscountNominal, setSaleDiscountNominal] = useState<number>(0);
   const [saleCustomerName, setSaleCustomerName] = useState("");
+  const [saleClaimPromo, setSaleClaimPromo] = useState<boolean>(false);
+  const [saleNoBottle, setSaleNoBottle] = useState<boolean>(false);
 
   // Purchase stock state
   const [purchaseCategory, setPurchaseCategory] = useState<"bibit" | "alkohol" | "botol" | "other">("bibit");
@@ -461,8 +463,8 @@ export default function App() {
       }
     }
 
-    // Apply "Free Bottle" discount by waiving the bottle fee
-    if (saleDiscountType === "free_bottle") {
+    // Apply "Free Bottle" discount by waiving the bottle fee or if bringing own bottle
+    if (saleDiscountType === "free_bottle" || saleNoBottle) {
       bottleFee = 0;
     }
 
@@ -475,7 +477,7 @@ export default function App() {
     }
 
     setSaleTotalPrice(computedTotal);
-  }, [saleScent, saleVolume, saleBottleSize, saleBottleCount, prices, bottleSizes, saleDiscountType, saleDiscountNominal]);
+  }, [saleScent, saleVolume, saleBottleSize, saleBottleCount, prices, bottleSizes, saleDiscountType, saleDiscountNominal, saleNoBottle]);
 
   // Currency Formatter helper (Indonesian Rupiah)
   const formatRupiah = (value: number) => {
@@ -664,12 +666,18 @@ export default function App() {
 
   const handleSalesSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const isHanyaBotol = saleScent === "Hanya Botol";
+
     if (!saleScent) {
       showToast("Harap pilih nama aroma!", "error");
       return;
     }
-    if (saleVolume <= 0) {
+    if (!isHanyaBotol && saleVolume <= 0) {
       showToast("Volume bibit harus di atas 0 ml!", "error");
+      return;
+    }
+    if (isHanyaBotol && saleBottleSize === "None") {
+      showToast("Harap pilih ukuran botol jika hanya membeli botol!", "error");
       return;
     }
     if (saleBottleCount <= 0) {
@@ -692,16 +700,22 @@ export default function App() {
     try {
       const txId = await addTransaction({
         type: "sale",
-        category: "bibit",
+        category: isHanyaBotol ? "botol" : "bibit",
         date: new Date().toISOString(),
         scentName: saleScent,
-        volumeMl: saleVolume,
+        volumeMl: isHanyaBotol ? 0 : saleVolume,
         bottleSize: saleBottleSize,
         bottleCount: saleBottleCount,
         totalPrice: saleTotalPrice,
         discountType: saleDiscountType,
         discountNominal: computedDiscount,
-        description: saleDescription || `Penjualan bibit ${saleScent} (${saleVolume}ml) + Botol ${saleBottleSize}${saleDiscountType !== 'none' ? ` (Diskon: ${saleDiscountType === 'free_bottle' ? 'Gratis Botol' : formatRupiah(computedDiscount)})` : ''}`,
+        claimPromoOnThisTx: saleClaimPromo,
+        noBottleStockDeduct: saleNoBottle,
+        description: saleDescription || (isHanyaBotol
+          ? `Penjualan Botol ${saleBottleSize} x ${saleBottleCount} (Hanya Botol)`
+          : saleNoBottle
+          ? `Penjualan bibit ${saleScent} (${saleVolume}ml) - Bawa Botol Sendiri ${saleBottleSize}${saleDiscountType !== 'none' ? ` (Diskon: ${saleDiscountType === 'free_bottle' ? 'Gratis Botol' : formatRupiah(computedDiscount)})` : ''}`
+          : `Penjualan bibit ${saleScent} (${saleVolume}ml) + Botol ${saleBottleSize}${saleDiscountType !== 'none' ? ` (Diskon: ${saleDiscountType === 'free_bottle' ? 'Gratis Botol' : formatRupiah(computedDiscount)})` : ''}`),
         operatorEmail: opEmail,
         customerName: saleCustomerName.trim() || "Pelanggan Umum"
       });
@@ -709,16 +723,22 @@ export default function App() {
       const newTx: Transaction = {
         id: txId,
         type: "sale",
-        category: "bibit",
+        category: isHanyaBotol ? "botol" : "bibit",
         date: new Date().toISOString(),
         scentName: saleScent,
-        volumeMl: saleVolume,
+        volumeMl: isHanyaBotol ? 0 : saleVolume,
         bottleSize: saleBottleSize,
         bottleCount: saleBottleCount,
         totalPrice: saleTotalPrice,
         discountType: saleDiscountType,
         discountNominal: computedDiscount,
-        description: saleDescription || `Penjualan bibit ${saleScent} (${saleVolume}ml) + Botol ${saleBottleSize}${saleDiscountType !== 'none' ? ` (Diskon: ${saleDiscountType === 'free_bottle' ? 'Gratis Botol' : formatRupiah(computedDiscount)})` : ''}`,
+        claimPromoOnThisTx: saleClaimPromo,
+        noBottleStockDeduct: saleNoBottle,
+        description: saleDescription || (isHanyaBotol
+          ? `Penjualan Botol ${saleBottleSize} x ${saleBottleCount} (Hanya Botol)`
+          : saleNoBottle
+          ? `Penjualan bibit ${saleScent} (${saleVolume}ml) - Bawa Botol Sendiri ${saleBottleSize}${saleDiscountType !== 'none' ? ` (Diskon: ${saleDiscountType === 'free_bottle' ? 'Gratis Botol' : formatRupiah(computedDiscount)})` : ''}`
+          : `Penjualan bibit ${saleScent} (${saleVolume}ml) + Botol ${saleBottleSize}${saleDiscountType !== 'none' ? ` (Diskon: ${saleDiscountType === 'free_bottle' ? 'Gratis Botol' : formatRupiah(computedDiscount)})` : ''}`),
         operatorEmail: opEmail,
         customerName: saleCustomerName.trim() || "Pelanggan Umum"
       };
@@ -735,6 +755,8 @@ export default function App() {
       setSaleDiscountType("none");
       setSaleDiscountNominal(0);
       setSaleCustomerName("");
+      setSaleClaimPromo(false);
+      setSaleNoBottle(false);
     } catch (err: any) {
       showToast(err.message || "Gagal mencatat penjualan", "error");
     }
@@ -861,8 +883,11 @@ export default function App() {
     if (confirm(`Klaim promo potongan untuk pelanggan "${customerName}"? Pembelian terakumulasi akan dikurangi sebesar batas nominal promo ${formatRupiah(promoThreshold)}.\n\nPelanggan akan menerima potongan diskon sebesar ${formatRupiah(promoDiscount)} yang tersinkronisasi otomatis dengan transaksi dan invoice!`)) {
       try {
         const opEmail = currentUser?.email || customEmail || "Kasir";
-        await claimCustomerPromo(customerId, opEmail);
+        const newTx = await claimCustomerPromo(customerId, opEmail);
         showToast(`Promo untuk ${customerName} berhasil diklaim dan invoice diskon tercatat!`, "success");
+        if (newTx) {
+          setPrintTx(newTx);
+        }
       } catch (err: any) {
         showToast(err.message || "Gagal mengklaim promo", "error");
       }
@@ -1949,7 +1974,7 @@ export default function App() {
                         <div key={s.id} className="flex justify-between items-center bg-amber-50 border border-amber-100 rounded-xl p-3 text-xs">
                           <div>
                             <span className="font-bold text-amber-900">
-                              {s.type === "essence" ? `Bibit ${s.scentName}` : s.type === "bottle" ? `Botol ${s.size}` : "Alkohol"}
+                              {s.type === "essence" ? `Bibit ${s.scentName}` : s.type === "bottle" ? `Botol ${s.size}` : "Absolut"}
                             </span>
                             <p className="text-[10px] text-amber-700">Perlu re-stock segera!</p>
                           </div>
@@ -2287,7 +2312,7 @@ export default function App() {
                 {/* Alkohol card total */}
                 <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm flex items-center justify-between">
                   <div>
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Stok Utama Alkohol</span>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Stok Utama Absolut</span>
                     <h4 className="text-2xl font-extrabold text-slate-900 font-mono mt-1">
                       {(stocks.find(s => s.id === "alcohol_main")?.quantity || 0).toLocaleString("id-ID")} ml
                     </h4>
@@ -2370,8 +2395,8 @@ export default function App() {
                   <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
                     <div className="flex items-center justify-between mb-4">
                       <div>
-                        <h3 className="font-bold text-sm text-slate-900">Stok Botol & Alkohol</h3>
-                        <p className="text-[11px] text-slate-500">Mencatat ketersediaan botol kosong dan cairan pelarut alkohol.</p>
+                        <h3 className="font-bold text-sm text-slate-900">Stok Botol & Absolut</h3>
+                        <p className="text-[11px] text-slate-500">Mencatat ketersediaan botol kosong dan cairan pelarut Absolut.</p>
                       </div>
                     </div>
 
@@ -2388,7 +2413,7 @@ export default function App() {
                           {stocks.filter(s => s.type === "bottle" || s.type === "alcohol").map((s) => (
                             <tr key={s.id} className="hover:bg-slate-50/50 transition-colors">
                               <td className="py-3 px-4 font-bold text-slate-800">
-                                {s.type === "alcohol" ? "Cairan Alkohol (Utama)" : `Botol Parfum Ukuran ${s.size}`}
+                                {s.type === "alcohol" ? "Cairan Absolut (Utama)" : `Botol Parfum Ukuran ${s.size}`}
                               </td>
                               <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">
                                 <span className={`px-2 py-1 rounded-md ${
@@ -2455,7 +2480,11 @@ export default function App() {
                       list="customer-suggestions"
                       placeholder="Masukkan nama pelanggan (kosongkan jika Pelanggan Umum)"
                       value={saleCustomerName}
-                      onChange={(e) => setSaleCustomerName(e.target.value)}
+                      onChange={(e) => {
+                        setSaleCustomerName(e.target.value);
+                        // Reset claim selection if customer name changes
+                        setSaleClaimPromo(false);
+                      }}
                       className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800 font-medium"
                     />
                     <datalist id="customer-suggestions">
@@ -2466,6 +2495,53 @@ export default function App() {
                     <span className="text-[10px] text-slate-400 mt-1 block">
                       💡 Ketik nama pelanggan. Jika pelanggan sudah pernah berbelanja, pilih dari daftar saran di atas untuk menghindari duplikasi penulisan.
                     </span>
+
+                    {/* Real-time Loyalty Integration Card */}
+                    {(() => {
+                      const matchedCustomer = customers.find(
+                        (c) => c.name.toLowerCase() === saleCustomerName.trim().toLowerCase()
+                      );
+                      const custAvailableClaims = matchedCustomer
+                        ? Math.floor(matchedCustomer.totalPurchase / promoThreshold)
+                        : 0;
+
+                      if (!matchedCustomer || custAvailableClaims <= 0) return null;
+
+                      return (
+                        <div className="mt-3 bg-emerald-50 border border-emerald-200 rounded-xl p-3.5 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-emerald-950 animate-in fade-in slide-in-from-top-1 duration-200">
+                          <div className="flex items-start gap-2.5">
+                            <span className="text-lg">🎉</span>
+                            <div>
+                              <p className="font-bold text-emerald-900">Pelanggan Setia Terdeteksi!</p>
+                              <p className="text-[11px] text-slate-600 mt-0.5">
+                                Memiliki <span className="font-bold text-emerald-700 font-mono">{custAvailableClaims}x</span> hak klaim promo (Sisa Akumulasi Belanja: <span className="font-mono font-bold">{formatRupiah(matchedCustomer.totalPurchase)}</span>)
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const turnOn = !saleClaimPromo;
+                              setSaleClaimPromo(turnOn);
+                              if (turnOn) {
+                                setSaleDiscountType("nominal");
+                                setSaleDiscountNominal(promoDiscount);
+                              } else {
+                                setSaleDiscountType("none");
+                                setSaleDiscountNominal(0);
+                              }
+                            }}
+                            className={`px-3 py-1.5 rounded-lg text-[10px] font-extrabold shadow-sm transition-all cursor-pointer border ${
+                              saleClaimPromo
+                                ? "bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700"
+                                : "bg-white border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+                            }`}
+                          >
+                            {saleClaimPromo ? "✅ Promo Terpasang" : "Gunakan 1 Klaim Promo"}
+                          </button>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -2475,10 +2551,16 @@ export default function App() {
                       <select
                         id="sales-scent-select"
                         value={saleScent}
-                        onChange={(e) => setSaleScent(e.target.value)}
+                        onChange={(e) => {
+                          setSaleScent(e.target.value);
+                          if (e.target.value === "Hanya Botol") {
+                            setSaleVolume(0);
+                          }
+                        }}
                         className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
                       >
                         <option value="">-- Pilih Aroma --</option>
+                        <option value="Hanya Botol" className="font-bold text-emerald-700 bg-emerald-50">🛍️ -- Hanya Beli Botol Saja --</option>
                         {prices.map(p => (
                           <option key={p.scentName} value={p.scentName}>
                             {p.scentName} ({formatRupiah(p.pricePerMl)} / ml)
@@ -2493,10 +2575,15 @@ export default function App() {
                       <input
                         id="sales-volume-input"
                         type="number"
-                        placeholder="Volume cairan bibit (ml)"
-                        value={saleVolume || ""}
+                        placeholder={saleScent === "Hanya Botol" ? "0 (Hanya Botol)" : "Volume cairan bibit (ml)"}
+                        value={saleScent === "Hanya Botol" ? "" : (saleVolume || "")}
+                        disabled={saleScent === "Hanya Botol"}
                         onChange={(e) => setSaleVolume(Number(e.target.value))}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white"
+                        className={`w-full border rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 ${
+                          saleScent === "Hanya Botol"
+                            ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed"
+                            : "bg-slate-50 border-slate-200 focus:bg-white text-slate-800"
+                        }`}
                       />
                     </div>
                   </div>
@@ -2508,7 +2595,12 @@ export default function App() {
                       <select
                         id="sales-bottle-select"
                         value={saleBottleSize}
-                        onChange={(e) => setSaleBottleSize(e.target.value)}
+                        onChange={(e) => {
+                          setSaleBottleSize(e.target.value);
+                          if (e.target.value === "None") {
+                            setSaleNoBottle(false);
+                          }
+                        }}
                         className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
                       >
                         {bottleSizes.map((b) => (
@@ -2530,9 +2622,36 @@ export default function App() {
                         placeholder="Jumlah pesanan botol"
                         value={saleBottleCount || ""}
                         onChange={(e) => setSaleBottleCount(Number(e.target.value))}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
                       />
                     </div>
+
+                    {/* Checkbox Bawa Botol Sendiri */}
+                    {saleScent !== "Hanya Botol" && (
+                      <div className="sm:col-span-2">
+                        <label className="flex items-start gap-3 bg-slate-50 border border-slate-200 rounded-xl p-3 cursor-pointer hover:bg-slate-100/70 transition-colors">
+                          <input
+                            type="checkbox"
+                            checked={saleNoBottle}
+                            disabled={saleBottleSize === "None"}
+                            onChange={(e) => {
+                              setSaleNoBottle(e.target.checked);
+                            }}
+                            className="h-4 w-4 text-emerald-600 focus:ring-emerald-500 border-slate-300 rounded cursor-pointer mt-0.5"
+                          />
+                          <div className="text-left">
+                            <span className={`text-xs font-bold ${saleBottleSize === "None" ? "text-slate-400" : "text-slate-700"}`}>
+                              Tanpa Potong Stok Botol (Bawa Botol Sendiri / Refill)
+                            </span>
+                            <p className="text-[10px] text-slate-500 mt-0.5 leading-normal">
+                              {saleBottleSize === "None" 
+                                ? "Pilih ukuran botol di atas terlebih dahulu jika ingin mengaktifkan perhitungan selisih sisa untuk pengurangan stok Absolut."
+                                : "Mengaktifkan ini akan membuat stok botol fisik toko TIDAK berkurang dan harga botol Rp 0 (Gratis/Bawa Sendiri). Stok Absolut akan tetap berkurang secara akurat berdasarkan selisih kapasitas botol dikurangi volume bibit."}
+                            </p>
+                          </div>
+                        </label>
+                      </div>
+                    )}
                   </div>
 
                   {/* Optional Description / Memo */}
@@ -2541,7 +2660,7 @@ export default function App() {
                     <input
                       id="sales-desc-input"
                       type="text"
-                      placeholder="Contoh: Pesanan aroma soft, campur alkohol standar..."
+                      placeholder="Contoh: Pesanan aroma soft, campur Absolut standar..."
                       value={saleDescription}
                       onChange={(e) => setSaleDescription(e.target.value)}
                       className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white"
@@ -2574,15 +2693,15 @@ export default function App() {
                           setSaleDiscountType("free_bottle");
                           setSaleDiscountNominal(0);
                         }}
-                        disabled={saleBottleSize === "None"}
+                        disabled={saleBottleSize === "None" || saleNoBottle}
                         className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all text-center cursor-pointer ${
-                          saleBottleSize === "None"
+                          (saleBottleSize === "None" || saleNoBottle)
                             ? "opacity-50 cursor-not-allowed bg-slate-100 text-slate-400 border-slate-200"
                             : saleDiscountType === "free_bottle"
                             ? "bg-emerald-600 text-white border-emerald-600"
-                            : "bg-white text-emerald-700 border-emerald-200 hover:bg-emerald-50"
+                            : "bg-white text-emerald-700 border-emerald-200 hover:bg-slate-50"
                         }`}
-                        title={saleBottleSize === "None" ? "Hanya tersedia jika menggunakan kemasan botol" : ""}
+                        title={saleNoBottle ? "Harga botol sudah Rp 0" : saleBottleSize === "None" ? "Hanya tersedia jika menggunakan kemasan botol" : ""}
                       >
                         Gratis Botol
                       </button>
@@ -2620,7 +2739,9 @@ export default function App() {
                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Perhitungan Total Harga</span>
                       <p className="text-xs text-slate-600 mt-1 leading-snug">
                         {saleScent ? `Bibit ${saleScent}: ${saleVolume}ml x Rp ${prices.find(p => p.scentName === saleScent)?.pricePerMl.toLocaleString() || '0'}` : '-- belum pilih aroma --'}<br />
-                        {saleBottleSize !== "None" ? `Botol ${saleBottleSize} x ${saleBottleCount}` : "Hanya Refill"} (Alkohol Free / Bundling)
+                        {saleBottleSize !== "None" 
+                          ? `${saleNoBottle ? 'Bawa Botol Sendiri' : `Botol ${saleBottleSize}`} x ${saleBottleCount}` 
+                          : "Hanya Refill"} (Absolut Free / Bundling)
                       </p>
                     </div>
                     <div className="text-center sm:text-right bg-emerald-50 border border-emerald-200 rounded-xl px-5 py-2.5">
@@ -2742,7 +2863,7 @@ export default function App() {
                 <div className="bg-slate-900 text-white p-6 flex justify-between items-center">
                   <div>
                     <h2 className="text-base font-bold font-display">CATAT BELANJA STOK MASTER</h2>
-                    <p className="text-[11px] text-slate-400">Pembelian baru yang menambah stok bibit/botol/alkohol, mengurangi kas toko</p>
+                    <p className="text-[11px] text-slate-400">Pembelian baru yang menambah stok bibit/botol/Absolut, mengurangi kas toko</p>
                   </div>
                   <span className="text-[11px] font-mono bg-rose-600/20 text-rose-400 border border-rose-500/30 font-bold px-2 py-1 rounded">
                     Uang Keluar (Kredit)
@@ -2766,7 +2887,7 @@ export default function App() {
                               : "bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100"
                           }`}
                         >
-                          {cat}
+                          {cat === "alkohol" ? "absolut" : cat}
                         </button>
                       ))}
                     </div>
@@ -4019,7 +4140,8 @@ export default function App() {
                       if (!customerSearchTerm) return true;
                       return c.name.toLowerCase().includes(customerSearchTerm.toLowerCase());
                     }).map((c) => {
-                      const isEligible = c.totalPurchase >= promoThreshold;
+                      const availableClaims = Math.floor(c.totalPurchase / promoThreshold);
+                      const isEligible = availableClaims > 0;
                       return (
                         <tr key={c.id} className="hover:bg-slate-50/50 transition-colors">
                           <td className="py-3.5 px-4 font-bold text-slate-800">{c.name}</td>
@@ -4037,11 +4159,11 @@ export default function App() {
                           <td className="py-3.5 px-4 text-center">
                             {isEligible ? (
                               <span className="bg-emerald-100 text-emerald-800 font-extrabold text-[9px] px-2.5 py-0.5 rounded-full animate-pulse border border-emerald-200">
-                                BISA KLAIM
+                                BISA KLAIM ({availableClaims}x)
                               </span>
                             ) : (
                               <div className="text-[10px] text-slate-400">
-                                Kurang <span className="font-bold text-slate-500 font-mono">{formatRupiah(promoThreshold - c.totalPurchase)}</span>
+                                Kurang <span className="font-bold text-slate-500 font-mono">{formatRupiah(promoThreshold - (c.totalPurchase % promoThreshold))}</span>
                               </div>
                             )}
                           </td>

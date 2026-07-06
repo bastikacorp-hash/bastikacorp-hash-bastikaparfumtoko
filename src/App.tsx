@@ -2735,16 +2735,66 @@ export default function App() {
 
                   {/* Calculations & Total Display Box */}
                   <div className="bg-slate-50 rounded-2xl p-5 border border-slate-200 flex flex-col sm:flex-row justify-between items-center gap-4">
-                    <div className="text-center sm:text-left">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Perhitungan Total Harga</span>
-                      <p className="text-xs text-slate-600 mt-1 leading-snug">
-                        {saleScent ? `Bibit ${saleScent}: ${saleVolume}ml x Rp ${prices.find(p => p.scentName === saleScent)?.pricePerMl.toLocaleString() || '0'}` : '-- belum pilih aroma --'}<br />
-                        {saleBottleSize !== "None" 
-                          ? `${saleNoBottle ? 'Bawa Botol Sendiri' : `Botol ${saleBottleSize}`} x ${saleBottleCount}` 
-                          : "Hanya Bibit"} (Absolut Free / Bundling)
-                      </p>
+                    <div className="text-center sm:text-left w-full sm:w-auto">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">Rincian Perhitungan Nota</span>
+                      <div className="space-y-1.5 text-xs text-slate-600 font-medium max-w-sm">
+                        {saleScent ? (
+                          <div className="flex justify-between gap-6">
+                            <span>Bibit {saleScent} ({saleVolume}ml x {saleBottleCount}):</span>
+                            <span className="font-mono text-slate-800">
+                              {formatRupiah(saleVolume * (prices.find(p => p.scentName === saleScent)?.pricePerMl || 0) * saleBottleCount)}
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="text-rose-500 italic">-- Belum pilih aroma --</div>
+                        )}
+
+                        {saleBottleSize !== "None" && (
+                          <div className="flex justify-between gap-6">
+                            <span>
+                              {saleNoBottle 
+                                ? `Bawa Botol Sendiri (${saleBottleSize} x ${saleBottleCount} pcs):` 
+                                : `Botol ${saleBottleSize} (${saleBottleCount} pcs):`
+                              }
+                            </span>
+                            <span className="font-mono text-slate-800">
+                              {saleNoBottle ? "Rp 0 (Bawa Sendiri)" : formatRupiah((bottleSizes.find(b => b.size === saleBottleSize)?.price || 0) * saleBottleCount)}
+                            </span>
+                          </div>
+                        )}
+
+                        <div className="border-t border-slate-200 pt-1.5 flex justify-between gap-6 font-bold text-slate-700">
+                          <span>Subtotal:</span>
+                          <span className="font-mono">
+                            {formatRupiah(
+                              (saleScent ? saleVolume * (prices.find(p => p.scentName === saleScent)?.pricePerMl || 0) * saleBottleCount : 0) +
+                              (saleBottleSize !== "None" && !saleNoBottle ? (bottleSizes.find(b => b.size === saleBottleSize)?.price || 0) * saleBottleCount : 0)
+                            )}
+                          </span>
+                        </div>
+
+                        {((saleDiscountType === "free_bottle" && (bottleSizes.find(b => b.size === saleBottleSize)?.price || 0) * saleBottleCount > 0) ||
+                          (saleDiscountType === "nominal" && saleDiscountNominal > 0)) && (
+                          <div className="flex justify-between gap-6 text-emerald-600 font-bold bg-emerald-50/50 border border-emerald-100/30 rounded-lg p-1.5">
+                            <span className="flex items-center gap-1">
+                              <span>🎁</span>
+                              <span>
+                                {saleClaimPromo 
+                                  ? "Klaim Promo Loyalitas:" 
+                                  : saleDiscountType === "free_bottle" 
+                                  ? "Diskon Gratis Botol:" 
+                                  : "Potongan Harga (Diskon):"
+                                }
+                              </span>
+                            </span>
+                            <span className="font-mono">
+                              -{formatRupiah(saleDiscountType === "free_bottle" ? (bottleSizes.find(b => b.size === saleBottleSize)?.price || 0) * saleBottleCount : saleDiscountNominal)}
+                            </span>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                    <div className="text-center sm:text-right bg-emerald-50 border border-emerald-200 rounded-xl px-5 py-2.5">
+                    <div className="text-center sm:text-right bg-emerald-50 border border-emerald-200 rounded-xl px-5 py-2.5 w-full sm:w-auto shrink-0">
                       <span className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider">Total Penjualan</span>
                       <p className="text-xl font-mono font-black text-emerald-700 leading-tight">
                         {formatRupiah(saleTotalPrice)}
@@ -4443,9 +4493,17 @@ export default function App() {
                       {/* Bottle Row if any */}
                       {printTx.bottleSize && printTx.bottleSize !== "None" && (
                         <div className="text-[8px] pt-1 flex justify-between">
-                          <span>Botol {printTx.bottleSize} ({printTx.bottleCount} pcs)</span>
                           <span>
-                            Rp {((bottleSizes.find(b => b.size === printTx.bottleSize)?.price || 0) * (printTx.bottleCount || 1)).toLocaleString("id-ID")}
+                            {printTx.noBottleStockDeduct 
+                              ? `Botol ${printTx.bottleSize} (${printTx.bottleCount} pcs) - Bawa Sendiri`
+                              : `Botol ${printTx.bottleSize} (${printTx.bottleCount} pcs)`
+                            }
+                          </span>
+                          <span>
+                            {printTx.noBottleStockDeduct
+                              ? "Rp 0"
+                              : `Rp ${((bottleSizes.find(b => b.size === printTx.bottleSize)?.price || 0) * (printTx.bottleCount || 1)).toLocaleString("id-ID")}`
+                            }
                           </span>
                         </div>
                       )}
@@ -4460,15 +4518,22 @@ export default function App() {
                       Rp {(printTx.scentName === "Klaim Promo Potongan"
                         ? printTx.discountNominal
                         : (((printTx.volumeMl || 0) * (prices.find(p => p.scentName === printTx.scentName)?.pricePerMl || 3500) * (printTx.bottleCount || 1)) +
-                           ((printTx.bottleSize && printTx.bottleSize !== "None" ? (bottleSizes.find(b => b.size === printTx.bottleSize)?.price || 0) : 0) * (printTx.bottleCount || 1)))
+                           ((printTx.bottleSize && printTx.bottleSize !== "None" && !printTx.noBottleStockDeduct ? (bottleSizes.find(b => b.size === printTx.bottleSize)?.price || 0) : 0) * (printTx.bottleCount || 1)))
                       ).toLocaleString("id-ID")}
                     </span>
                   </div>
                   {printTx.discountNominal ? (
-                    <div className="flex justify-between text-[8px] font-bold">
-                      <span>DISKON PROMO</span>
-                      <span>-Rp {printTx.discountNominal.toLocaleString("id-ID")}</span>
-                    </div>
+                    <>
+                      <div className="flex justify-between text-[8px] font-bold text-emerald-700">
+                        <span>{printTx.claimPromoOnThisTx ? "POTONGAN PROMO LOYALITAS" : "DISKON PROMO"}</span>
+                        <span>-Rp {printTx.discountNominal.toLocaleString("id-ID")}</span>
+                      </div>
+                      {printTx.claimPromoOnThisTx && (
+                        <div className="text-[6.5px] text-slate-500 italic text-right leading-none">
+                          * Penukaran Akumulasi Loyalitas Belanja
+                        </div>
+                      )}
+                    </>
                   ) : null}
                   <div className="flex justify-between text-[9px] font-black border-t border-dotted border-slate-400 pt-1">
                     <span>TOTAL BAYAR</span>
@@ -4590,9 +4655,17 @@ export default function App() {
 
                           {printTx.bottleSize && printTx.bottleSize !== "None" && (
                             <div className="text-[7px] pt-1 flex justify-between text-slate-800">
-                              <span>Botol {printTx.bottleSize} ({printTx.bottleCount} pcs)</span>
                               <span>
-                                Rp {((bottleSizes.find(b => b.size === printTx.bottleSize)?.price || 0) * (printTx.bottleCount || 1)).toLocaleString("id-ID")}
+                                {printTx.noBottleStockDeduct 
+                                  ? `Botol ${printTx.bottleSize} (${printTx.bottleCount} pcs) - Bawa Sendiri`
+                                  : `Botol ${printTx.bottleSize} (${printTx.bottleCount} pcs)`
+                                }
+                              </span>
+                              <span>
+                                {printTx.noBottleStockDeduct
+                                  ? "Rp 0"
+                                  : `Rp ${((bottleSizes.find(b => b.size === printTx.bottleSize)?.price || 0) * (printTx.bottleCount || 1)).toLocaleString("id-ID")}`
+                                }
                               </span>
                             </div>
                           )}
@@ -4607,15 +4680,22 @@ export default function App() {
                           Rp {(printTx.scentName === "Klaim Promo Potongan"
                             ? printTx.discountNominal
                             : (((printTx.volumeMl || 0) * (prices.find(p => p.scentName === printTx.scentName)?.pricePerMl || 3500) * (printTx.bottleCount || 1)) +
-                               ((printTx.bottleSize && printTx.bottleSize !== "None" ? (bottleSizes.find(b => b.size === printTx.bottleSize)?.price || 0) : 0) * (printTx.bottleCount || 1)))
+                               ((printTx.bottleSize && printTx.bottleSize !== "None" && !printTx.noBottleStockDeduct ? (bottleSizes.find(b => b.size === printTx.bottleSize)?.price || 0) : 0) * (printTx.bottleCount || 1)))
                           ).toLocaleString("id-ID")}
                         </span>
                       </div>
                       {printTx.discountNominal ? (
-                        <div className="flex justify-between text-[7px] font-bold text-emerald-700">
-                          <span>DISKON PROMO</span>
-                          <span>-Rp {printTx.discountNominal.toLocaleString("id-ID")}</span>
-                        </div>
+                        <>
+                          <div className="flex justify-between text-[7px] font-bold text-emerald-700">
+                            <span>{printTx.claimPromoOnThisTx ? "POTONGAN PROMO LOYALITAS" : "DISKON PROMO"}</span>
+                            <span>-Rp {printTx.discountNominal.toLocaleString("id-ID")}</span>
+                          </div>
+                          {printTx.claimPromoOnThisTx && (
+                            <div className="text-[5.5px] text-slate-500 italic text-right leading-none">
+                              * Penukaran Akumulasi Loyalitas Belanja
+                            </div>
+                          )}
+                        </>
                       ) : null}
                       <div className="flex justify-between text-[8px] font-black border-t border-dotted border-slate-400 pt-1">
                         <span>TOTAL BAYAR</span>

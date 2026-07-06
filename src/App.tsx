@@ -79,6 +79,7 @@ import {
   Lock, 
   RefreshCw, 
   AlertCircle, 
+  Activity, 
   Calendar, 
   DollarSign, 
   Package, 
@@ -185,6 +186,10 @@ export default function App() {
   const [purchaseCount, setPurchaseCount] = useState<number>(0);
   const [purchasePrice, setPurchasePrice] = useState<number>(0);
   const [purchaseDesc, setPurchaseDesc] = useState("");
+  const [purchaseSearchTerm, setPurchaseSearchTerm] = useState("");
+  const [purchaseFilterStartDate, setPurchaseFilterStartDate] = useState("");
+  const [purchaseFilterEndDate, setPurchaseFilterEndDate] = useState("");
+  const [purchaseListCategoryFilter, setPurchaseListCategoryFilter] = useState<string>("all");
 
   // Salary form state
   const [salEmployee, setSalEmployee] = useState("");
@@ -829,6 +834,16 @@ export default function App() {
       return;
     }
 
+    let finalScent = purchaseScent.trim();
+    if (purchaseCategory === "bibit" && finalScent) {
+      const existingMatch = prices.find(
+        p => p.scentName.toLowerCase() === finalScent.toLowerCase()
+      );
+      if (existingMatch) {
+        finalScent = existingMatch.scentName;
+      }
+    }
+
     const opEmail = currentUser?.email || customEmail || "admin_operator@gmail.com";
     const calculatedTotal = purchaseTotalPriceCalculation();
 
@@ -837,12 +852,12 @@ export default function App() {
         type: "purchase",
         category: purchaseCategory,
         date: new Date().toISOString(),
-        scentName: purchaseCategory === "bibit" ? purchaseScent : undefined,
+        scentName: purchaseCategory === "bibit" ? finalScent : undefined,
         volumeMl: (purchaseCategory === "bibit" || purchaseCategory === "alkohol") ? purchaseVolume : undefined,
         bottleSize: purchaseCategory === "botol" ? purchaseBottleSize : "None",
         bottleCount: purchaseCategory === "botol" ? purchaseCount : undefined,
         totalPrice: calculatedTotal,
-        description: purchaseDesc || `Pembelian stok ${purchaseCategory} ${purchaseCategory === 'bibit' ? purchaseScent : purchaseCategory === 'botol' ? purchaseBottleSize : ''}`,
+        description: purchaseDesc || `Pembelian stok ${purchaseCategory} ${purchaseCategory === 'bibit' ? finalScent : purchaseCategory === 'botol' ? purchaseBottleSize : ''}`,
         operatorEmail: opEmail
       });
 
@@ -3146,16 +3161,59 @@ export default function App() {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {/* Category specific fields */}
                     {purchaseCategory === "bibit" && (
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Aroma Bibit Parfum (Masukkan Nama)</label>
-                        <input
-                          id="purchase-scent-input"
-                          type="text"
-                          placeholder="Contoh: Bacarat Rouge, Bulgari..."
-                          value={purchaseScent}
-                          onChange={(e) => setPurchaseScent(e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white"
-                        />
+                      <div className="space-y-2">
+                        <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Aroma Bibit Parfum (Pilih dari Master atau Ketik Baru)</label>
+                        <div className="relative">
+                          <input
+                            id="purchase-scent-input"
+                            type="text"
+                            placeholder="Ketik untuk mencari atau menambah aroma..."
+                            value={purchaseScent}
+                            onChange={(e) => setPurchaseScent(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
+                          />
+                          {purchaseScent && (
+                            <button
+                              type="button"
+                              onClick={() => setPurchaseScent("")}
+                              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 font-bold text-xs"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+                        
+                        {/* Quick filter selection area */}
+                        <div className="bg-slate-50 border border-slate-200/60 rounded-xl p-3">
+                          <span className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                            <Sparkles className="h-3 w-3 text-emerald-600" />
+                            Aroma Terdaftar di Sistem (Klik untuk Pilih):
+                          </span>
+                          <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto pr-1">
+                            {prices
+                              .filter(p => !purchaseScent || p.scentName.toLowerCase().includes(purchaseScent.toLowerCase()))
+                              .map(p => (
+                                <button
+                                  key={p.scentName}
+                                  type="button"
+                                  onClick={() => setPurchaseScent(p.scentName)}
+                                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-all cursor-pointer ${
+                                    purchaseScent.toLowerCase() === p.scentName.toLowerCase()
+                                      ? "bg-emerald-600 text-white border-emerald-600 shadow-sm"
+                                      : "bg-white text-slate-700 border-slate-200 hover:border-emerald-300 hover:bg-emerald-50/40"
+                                  }`}
+                                >
+                                  {p.scentName}
+                                </button>
+                              ))}
+                            {prices.filter(p => !purchaseScent || p.scentName.toLowerCase().includes(purchaseScent.toLowerCase())).length === 0 && (
+                              <div className="text-[10px] text-amber-600 font-bold flex items-center gap-1.5 py-0.5">
+                                <Info className="h-3.5 w-3.5 text-amber-500" />
+                                <span>Aroma baru: "{purchaseScent}" (Akan otomatis didaftarkan ke sistem)</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
                       </div>
                     )}
 
@@ -3305,6 +3363,241 @@ export default function App() {
                     SIMPAN & PROSES PENAMBAHAN STOK BELANJA
                   </button>
                 </form>
+              </div>
+
+              {/* Riwayat Detail Belanja Stok */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-lg overflow-hidden">
+                <div className="bg-slate-950 text-white p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <h2 className="text-sm font-extrabold font-display uppercase tracking-wider flex items-center gap-2">
+                      <Activity className="h-4.5 w-4.5 text-rose-500" />
+                      Riwayat Detail Belanja Stok
+                    </h2>
+                    <p className="text-[10px] text-slate-400">Log mutasi pembelanjaan inventori dan penambahan stok master.</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700/60 px-2.5 py-1 rounded-full">
+                      {transactions.filter(t => t.type === "purchase").length} Pembelian Total
+                    </span>
+                  </div>
+                </div>
+
+                <div className="p-5 space-y-4">
+                  {/* Filters Grid */}
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-slate-50 border border-slate-200/60 p-4 rounded-xl">
+                    {/* Search bar */}
+                    <div className="md:col-span-1">
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Cari Aroma / Memo</label>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          placeholder="Cari kata kunci..."
+                          value={purchaseSearchTerm}
+                          onChange={(e) => setPurchaseSearchTerm(e.target.value)}
+                          className="w-full bg-white border border-slate-200 rounded-lg pl-8 pr-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 text-slate-800"
+                        />
+                        <Filter className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                      </div>
+                    </div>
+
+                    {/* Category Filter */}
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Kategori Barang</label>
+                      <select
+                        value={purchaseListCategoryFilter}
+                        onChange={(e) => setPurchaseListCategoryFilter(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800"
+                      >
+                        <option value="all">Semua Kategori</option>
+                        <option value="bibit">Bibit Parfum</option>
+                        <option value="botol">Botol Kosong</option>
+                        <option value="alkohol">Absolut</option>
+                        <option value="other">Lain-lain</option>
+                      </select>
+                    </div>
+
+                    {/* Start Date */}
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Dari Tanggal</label>
+                      <input
+                        type="date"
+                        value={purchaseFilterStartDate}
+                        onChange={(e) => setPurchaseFilterStartDate(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800"
+                      />
+                    </div>
+
+                    {/* End Date */}
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Sampai Tanggal</label>
+                      <div className="flex gap-2">
+                        <input
+                          type="date"
+                          value={purchaseFilterEndDate}
+                          onChange={(e) => setPurchaseFilterEndDate(e.target.value)}
+                          className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800"
+                        />
+                        {(purchaseSearchTerm || purchaseListCategoryFilter !== "all" || purchaseFilterStartDate || purchaseFilterEndDate) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPurchaseSearchTerm("");
+                              setPurchaseListCategoryFilter("all");
+                              setPurchaseFilterStartDate("");
+                              setPurchaseFilterEndDate("");
+                            }}
+                            className="bg-rose-50 hover:bg-rose-100 text-rose-700 p-1.5 rounded-lg border border-rose-200 text-[11px] font-bold transition-all cursor-pointer"
+                            title="Reset Filter"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Filter Summaries / Cost Aggregate */}
+                  {(() => {
+                    const filtered = transactions
+                      .filter(t => t.type === "purchase")
+                      .filter(t => {
+                        if (purchaseListCategoryFilter && purchaseListCategoryFilter !== "all" && t.category !== purchaseListCategoryFilter) return false;
+                        if (purchaseSearchTerm) {
+                          const term = purchaseSearchTerm.toLowerCase();
+                          const scent = t.scentName ? t.scentName.toLowerCase() : "";
+                          const desc = t.description ? t.description.toLowerCase() : "";
+                          const idStr = t.id.toLowerCase();
+                          const op = t.operatorEmail.toLowerCase();
+                          if (!scent.includes(term) && !desc.includes(term) && !idStr.includes(term) && !op.includes(term)) return false;
+                        }
+                        const itemDateOnly = t.date.substring(0, 10);
+                        if (purchaseFilterStartDate && itemDateOnly < purchaseFilterStartDate) return false;
+                        if (purchaseFilterEndDate && itemDateOnly > purchaseFilterEndDate) return false;
+                        return true;
+                      })
+                      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+                    const totalCost = filtered.reduce((sum, t) => sum + t.totalPrice, 0);
+                    const totalBibitVol = filtered.filter(t => t.category === "bibit").reduce((sum, t) => sum + (t.volumeMl || 0), 0);
+                    const totalBotolCount = filtered.filter(t => t.category === "botol").reduce((sum, t) => sum + (t.bottleCount || 0), 0);
+                    const totalAlkoholVol = filtered.filter(t => t.category === "alkohol").reduce((sum, t) => sum + (t.volumeMl || 0), 0);
+
+                    return (
+                      <div className="space-y-4">
+                        {/* Summary Widgets */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                          <div className="bg-rose-50/50 border border-rose-100 rounded-xl p-3">
+                            <span className="block text-[9px] font-bold text-rose-800 uppercase tracking-wider">Total Biaya Belanja</span>
+                            <div className="text-sm font-extrabold text-rose-950 font-mono mt-1">
+                              {formatRupiah(totalCost)}
+                            </div>
+                            <span className="text-[9px] text-rose-600 mt-0.5 block">{filtered.length} transaksi terfilter</span>
+                          </div>
+                          
+                          <div className="bg-emerald-50/50 border border-emerald-100 rounded-xl p-3">
+                            <span className="block text-[9px] font-bold text-emerald-800 uppercase tracking-wider">Volume Bibit Parfum</span>
+                            <div className="text-sm font-extrabold text-emerald-950 font-mono mt-1">
+                              {totalBibitVol.toLocaleString("id-ID")} ml
+                            </div>
+                            <span className="text-[9px] text-emerald-600 mt-0.5 block">Dari kategori bibit</span>
+                          </div>
+
+                          <div className="bg-amber-50/50 border border-amber-100 rounded-xl p-3">
+                            <span className="block text-[9px] font-bold text-amber-800 uppercase tracking-wider">Jumlah Botol Masuk</span>
+                            <div className="text-sm font-extrabold text-amber-950 font-mono mt-1">
+                              {totalBotolCount.toLocaleString("id-ID")} unit
+                            </div>
+                            <span className="text-[9px] text-amber-600 mt-0.5 block">Dari kategori botol</span>
+                          </div>
+
+                          <div className="bg-teal-50/50 border border-teal-100 rounded-xl p-3">
+                            <span className="block text-[9px] font-bold text-teal-800 uppercase tracking-wider">Volume Absolut Masuk</span>
+                            <div className="text-sm font-extrabold text-teal-950 font-mono mt-1">
+                              {totalAlkoholVol.toLocaleString("id-ID")} ml
+                            </div>
+                            <span className="text-[9px] text-teal-600 mt-0.5 block">Dari kategori absolut</span>
+                          </div>
+                        </div>
+
+                        {/* Purchases Table */}
+                        <div className="overflow-x-auto border border-slate-100 rounded-xl">
+                          <table className="w-full text-left text-xs">
+                            <thead>
+                              <tr className="bg-slate-50 border-b border-slate-100 text-slate-500 uppercase tracking-wider text-[9px] font-extrabold">
+                                <th className="py-2.5 px-3">Waktu</th>
+                                <th className="py-2.5 px-3">Barang & Kategori</th>
+                                <th className="py-2.5 px-3">Volume/Qty</th>
+                                <th className="py-2.5 px-3 text-right">Biaya Belanja</th>
+                                <th className="py-2.5 px-3">Operator / Memo</th>
+                                <th className="py-2.5 px-3 text-center">Aksi</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {filtered.map((t) => (
+                                <tr key={t.id} className="hover:bg-slate-50/40 transition-colors">
+                                  <td className="py-2.5 px-3 font-mono text-[10px] text-slate-500">
+                                    {new Date(t.date).toLocaleString("id-ID", {
+                                      day: "numeric",
+                                      month: "short",
+                                      hour: "2-digit",
+                                      minute: "2-digit"
+                                    })}
+                                  </td>
+                                  <td className="py-2.5 px-3">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase ${
+                                        t.category === "bibit" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" :
+                                        t.category === "botol" ? "bg-amber-50 text-amber-700 border border-amber-200" :
+                                        t.category === "alkohol" ? "bg-teal-50 text-teal-700 border border-teal-200" :
+                                        "bg-slate-50 text-slate-700 border border-slate-200"
+                                      }`}>
+                                        {t.category === "alkohol" ? "absolut" : t.category}
+                                      </span>
+                                      <span className="font-bold text-slate-800">
+                                        {t.category === "bibit" ? t.scentName :
+                                         t.category === "botol" ? `Botol ${t.bottleSize}` :
+                                         t.category === "alkohol" ? "Cairan Absolut" : "Operasional Lain"}
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td className="py-2.5 px-3 font-semibold text-slate-600">
+                                    {t.category === "bibit" || t.category === "alkohol" ? `${t.volumeMl} ml` :
+                                     t.category === "botol" ? `${t.bottleCount} unit` : "-"}
+                                  </td>
+                                  <td className="py-2.5 px-3 text-right font-mono font-bold text-rose-700">
+                                    -{formatRupiah(t.totalPrice)}
+                                  </td>
+                                  <td className="py-2.5 px-3">
+                                    <div className="text-[10px] font-medium text-slate-500">{t.description}</div>
+                                    <span className="text-[9px] text-slate-400 font-mono">Oleh: {t.operatorEmail}</span>
+                                  </td>
+                                  <td className="py-2.5 px-3 text-center">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteTransaction(t.id, t.description)}
+                                      className="inline-flex items-center gap-1 px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 font-bold rounded text-[10px] transition-all border border-rose-100 shadow-sm cursor-pointer"
+                                      title="Batalkan & Kembalikan Kas/Stok"
+                                    >
+                                      <Trash2 className="h-3 w-3" />
+                                      Hapus
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                              {filtered.length === 0 && (
+                                <tr>
+                                  <td colSpan={6} className="py-8 text-center text-slate-400 italic text-slate-400">
+                                    Tidak ada data belanja yang cocok dengan filter saat ini.
+                                  </td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
               </div>
 
             </div>

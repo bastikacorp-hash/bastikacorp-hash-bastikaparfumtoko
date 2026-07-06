@@ -246,7 +246,22 @@ export function subscribeToTransactions(callback: (transactions: Transaction[]) 
 }
 
 // Recording transactions with atomic stock adjustments & Cash Ledger Integration
-export async function addTransaction(tx: Omit<Transaction, "id">) {
+export async function addTransaction(rawTx: Omit<Transaction, "id">) {
+  const cleanObj = (obj: any): any => {
+    if (Array.isArray(obj)) {
+      return obj.map(cleanObj);
+    } else if (obj !== null && typeof obj === "object") {
+      const newObj: any = {};
+      for (const key of Object.keys(obj)) {
+        if (obj[key] !== undefined) {
+          newObj[key] = cleanObj(obj[key]);
+        }
+      }
+      return newObj;
+    }
+    return obj;
+  };
+  const tx = cleanObj(rawTx) as Omit<Transaction, "id">;
   const id = "tx_" + generateId();
   const dateStr = tx.date || new Date().toISOString();
 

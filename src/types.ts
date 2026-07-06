@@ -1,4 +1,4 @@
-export type UserRole = "admin" | "client";
+export type UserRole = "admin" | "client" | "reseller";
 
 export interface UserProfile {
   email: string;
@@ -40,7 +40,7 @@ export interface SaleItem {
 
 export interface Transaction {
   id: string;
-  type: "purchase" | "sale";
+  type: "purchase" | "sale" | "transfer";
   date: string; // ISO String or local Date string
   category: "bibit" | "alkohol" | "botol" | "other";
   scentName?: string; // If bibit/essence is selected
@@ -56,6 +56,10 @@ export interface Transaction {
   claimPromoOnThisTx?: boolean;
   noBottleStockDeduct?: boolean;
   items?: SaleItem[];
+  resellerEmail?: string;
+  paymentStatus?: "Lunas" | "Belum Dibayar";
+  isConsignment?: boolean;
+  packageName?: string;
 }
 
 export interface Salary {
@@ -106,5 +110,25 @@ export interface Customer {
   claimedPromos: number;
   updatedAt: string;
 }
+
+export interface ResellerStock {
+  id: string; // resellerEmail_stockType_scentName/size
+  resellerEmail: string;
+  type: "essence" | "alcohol" | "bottle";
+  scentName?: string;
+  size?: string; // For bottles
+  quantity: number;
+}
+
+export interface BundlingPackage {
+  id: string;
+  packageName: string;
+  bottleSize: string;
+  essenceMl: number;
+  alcoholMl: number;
+  price: number;
+  addedAt: string;
+}
+
 
 

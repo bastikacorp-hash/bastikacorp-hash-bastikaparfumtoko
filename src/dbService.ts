@@ -26,7 +26,9 @@ import {
   UserProfile,
   BottleSize,
   InvoiceSettings,
-  Customer
+  Customer,
+  ResellerStock,
+  BundlingPackage
 } from "./types";
 
 // Helper for unique ID generation if Firestore auto-id isn't used
@@ -1436,6 +1438,256 @@ export async function importDatabaseData(backupData: Record<string, any[]>, mode
     }
   }
 }
+
+// ==========================================
+// KONSINYASI & BUNDLING SERVICES
+// ==========================================
+
+export function subscribeToResellerStocks(callback: (stocks: ResellerStock[]) => void) {
+  return onSnapshot(collection(db, "reseller_stocks"), (snapshot) => {
+    const list: ResellerStock[] = [];
+    snapshot.forEach((docSnap) => {
+      list.push(docSnap.data() as ResellerStock);
+    });
+    callback(list);
+  });
+}
+
+export function subscribeToBundlingPackages(callback: (packages: BundlingPackage[]) => void) {
+  return onSnapshot(query(collection(db, "bundling_packages"), orderBy("addedAt", "desc")), (snapshot) => {
+    const list: BundlingPackage[] = [];
+    snapshot.forEach((docSnap) => {
+      list.push(docSnap.data() as BundlingPackage);
+    });
+    callback(list);
+  });
+}
+
+export async function addBundlingPackage(pkg: Omit<BundlingPackage, "id" | "addedAt">) {
+  const id = "pkg_" + generateId();
+  await setDoc(doc(db, "bundling_packages", id), {
+    ...pkg,
+    id,
+    addedAt: new Date().toISOString()
+  });
+  return id;
+}
+
+export async function deleteBundlingPackage(id: string) {
+  await deleteDoc(doc(db, "bundling_packages", id));
+}
+
+// Transfer Stock to Reseller (Consignment)
+export async function transferStockToReseller(
+  resellerEmail: string,
+  type: "essence" | "alcohol" | "bottle",
+  scentName: string | undefined,
+  size: string | undefined,
+  quantity: number,
+  operatorEmail: string
+) {
+  const dateStr = new Date().toISOString();
+  const txId = "tx_transfer_" + generateId();
+
+  await runTransaction(db, async (transaction) => {
+    // 1. Get Master Stock Ref & Read
+    let masterStockId = "";
+    if (type === "essence") {
+      masterStockId = `essence_${scentName?.replace(/\s+/g, "_").toLowerCase()}`;
+    } else if (type === "alcohol") {
+      masterStockId = "alcohol_main";
+    } else if (type === "bottle") {
+      masterStockId = `bottle_${size}`;
+    }
+
+    const masterStockRef = doc(db, "stocks", masterStockId);
+    const masterStockSnap = await transaction.get(masterStockRef);
+
+    if (!masterStockSnap.exists()) {
+      throw new Error(`Stok utama untuk komponen tersebut tidak ditemukan!`);
+    }
+
+    const currentMasterQty = masterStockSnap.data().quantity || 0;
+    if (currentMasterQty < quantity) {
+      throw new Error(`Stok utama tidak mencukupi! Tersedia: ${currentMasterQty}, Meminta: ${quantity}`);
+    }
+
+    // 2. Get Reseller Stock Ref & Read
+    const safeEmail = resellerEmail.trim().toLowerCase().replace(/[^a-z0-9@.]+/g, "_");
+    const resellerStockId = `${safeEmail}_${type}_${type === "essence" ? scentName?.replace(/\s+/g, "_").toLowerCase() : type === "bottle" ? size : "main"}`;
+    const resellerStockRef = doc(db, "reseller_stocks", resellerStockId);
+    const resellerStockSnap = await transaction.get(resellerStockRef);
+
+    // 3. Perform Writes
+    // A. Deduct Master Stock
+    transaction.update(masterStockRef, { quantity: currentMasterQty - quantity });
+
+    // B. Increment Reseller Stock
+    let currentResellerQty = 0;
+    if (resellerStockSnap.exists()) {
+      currentResellerQty = resellerStockSnap.data().quantity || 0;
+      transaction.update(resellerStockRef, { quantity: currentResellerQty + quantity });
+    } else {
+      transaction.set(resellerStockRef, {
+        id: resellerStockId,
+        resellerEmail: resellerEmail.trim().toLowerCase(),
+        type,
+        scentName: scentName || "",
+        size: size || "",
+        quantity: quantity
+      });
+    }
+
+    // C. Write Transfer Transaction (Logs)
+    const txRef = doc(db, "transactions", txId);
+    const description = `Transfer stok titipan ke ${resellerEmail}: ${type === "essence" ? `Bibit ${scentName}` : type === "bottle" ? `Botol ${size}` : "Absolut"} sebanyak ${quantity}`;
+    
+    transaction.set(txRef, {
+      id: txId,
+      type: "transfer",
+      date: dateStr,
+      category: type === "essence" ? "bibit" : type === "bottle" ? "botol" : "alkohol",
+      scentName: scentName || "",
+      bottleSize: size || "None",
+      bottleCount: type === "bottle" ? quantity : 0,
+      volumeMl: type === "essence" || type === "alcohol" ? quantity : 0,
+      totalPrice: 0,
+      description,
+      operatorEmail,
+      resellerEmail: resellerEmail.trim().toLowerCase(),
+      isConsignment: true
+    });
+  });
+}
+
+// Reseller Sale Transaction
+export async function addResellerSaleTransaction(
+  resellerEmail: string,
+  packageId: string,
+  packageName: string,
+  scentName: string,
+  bottleSize: string,
+  essenceMl: number,
+  alcoholMl: number,
+  quantity: number,
+  pricePerUnit: number,
+  operatorEmail: string
+) {
+  const dateStr = new Date().toISOString();
+  const txId = "tx_reseller_sale_" + generateId();
+  const totalPrice = pricePerUnit * quantity;
+
+  await runTransaction(db, async (transaction) => {
+    const safeEmail = resellerEmail.trim().toLowerCase().replace(/[^a-z0-9@.]+/g, "_");
+
+    // 1. Get Reseller Stock Refs & Read
+    // A. Essence
+    const essenceId = `${safeEmail}_essence_${scentName.replace(/\s+/g, "_").toLowerCase()}`;
+    const essenceRef = doc(db, "reseller_stocks", essenceId);
+    const essenceSnap = await transaction.get(essenceRef);
+
+    // B. Bottle
+    const bottleId = `${safeEmail}_bottle_${bottleSize}`;
+    const bottleRef = doc(db, "reseller_stocks", bottleId);
+    const bottleSnap = await transaction.get(bottleRef);
+
+    // C. Alcohol
+    const alcoholId = `${safeEmail}_alcohol_main`;
+    const alcoholRef = doc(db, "reseller_stocks", alcoholId);
+    const alcoholSnap = await transaction.get(alcoholRef);
+
+    // 2. Validate quantities
+    const totalEssenceNeeded = essenceMl * quantity;
+    const totalBottleNeeded = quantity;
+    const totalAlcoholNeeded = alcoholMl * quantity;
+
+    if (!essenceSnap.exists() || (essenceSnap.data().quantity || 0) < totalEssenceNeeded) {
+      throw new Error(`Stok bibit aroma ${scentName} di Reseller tidak mencukupi! Tersedia: ${essenceSnap.exists() ? essenceSnap.data().quantity : 0} ml, Butuh: ${totalEssenceNeeded} ml`);
+    }
+
+    if (!bottleSnap.exists() || (bottleSnap.data().quantity || 0) < totalBottleNeeded) {
+      throw new Error(`Stok botol ${bottleSize} di Reseller tidak mencukupi! Tersedia: ${bottleSnap.exists() ? bottleSnap.data().quantity : 0} unit, Butuh: ${totalBottleNeeded} unit`);
+    }
+
+    if (!alcoholSnap.exists() || (alcoholSnap.data().quantity || 0) < totalAlcoholNeeded) {
+      throw new Error(`Stok absolut di Reseller tidak mencukupi! Tersedia: ${alcoholSnap.exists() ? alcoholSnap.data().quantity : 0} ml, Butuh: ${totalAlcoholNeeded} ml`);
+    }
+
+    // 3. Perform Deductions
+    transaction.update(essenceRef, { quantity: essenceSnap.data().quantity - totalEssenceNeeded });
+    transaction.update(bottleRef, { quantity: bottleSnap.data().quantity - totalBottleNeeded });
+    transaction.update(alcoholRef, { quantity: alcoholSnap.data().quantity - totalAlcoholNeeded });
+
+    // 4. Save transaction in DB
+    const txRef = doc(db, "transactions", txId);
+    transaction.set(txRef, {
+      id: txId,
+      type: "sale",
+      date: dateStr,
+      category: "other", // represents bundling package sale
+      scentName,
+      bottleSize,
+      bottleCount: quantity,
+      volumeMl: totalEssenceNeeded,
+      totalPrice,
+      description: `Penjualan Bundling Reseller: ${packageName} (Aroma ${scentName}) x ${quantity} pcs`,
+      operatorEmail,
+      resellerEmail: resellerEmail.trim().toLowerCase(),
+      paymentStatus: "Belum Dibayar",
+      isConsignment: true,
+      packageName
+    });
+  });
+
+  return txId;
+}
+
+// Settle Reseller Transaction
+export async function settleResellerTransaction(txId: string, operatorEmail: string) {
+  const dateStr = new Date().toISOString();
+  await runTransaction(db, async (transaction) => {
+    // 1. Read Transaction
+    const txRef = doc(db, "transactions", txId);
+    const txSnap = await transaction.get(txRef);
+    if (!txSnap.exists()) {
+      throw new Error("Transaksi tidak ditemukan!");
+    }
+    const txData = txSnap.data() as Transaction;
+    if (txData.paymentStatus === "Lunas") {
+      throw new Error("Transaksi sudah berstatus Lunas!");
+    }
+
+    // 2. Read Cash Balance
+    const cashRef = doc(db, "config", "cash");
+    const cashSnap = await transaction.get(cashRef);
+    let currentBalance = 15000000;
+    if (cashSnap.exists()) {
+      currentBalance = cashSnap.data().balance;
+    }
+
+    // 3. Update Transaction paymentStatus to "Lunas"
+    transaction.update(txRef, { paymentStatus: "Lunas" });
+
+    // 4. Update Cash Balance
+    const newBalance = currentBalance + txData.totalPrice;
+    transaction.update(cashRef, { balance: newBalance });
+
+    // 5. Write Cash Ledger Mutation
+    const mutId = "mut_settle_" + generateId();
+    const mutationRef = doc(db, "cash_ledger", mutId);
+    transaction.set(mutationRef, {
+      id: mutId,
+      date: dateStr,
+      type: "in",
+      amount: txData.totalPrice,
+      balanceBefore: currentBalance,
+      balanceAfter: newBalance,
+      description: `Setoran Reseller (${txData.resellerEmail}): Pelunasan ${txData.description}`,
+      referenceId: txId
+    });
+  });
+}
+
 
 
 

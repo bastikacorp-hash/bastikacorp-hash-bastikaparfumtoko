@@ -49,7 +49,14 @@ import {
   deleteCustomer,
   exportDatabaseData,
   importDatabaseData,
-  clearEntireDatabase
+  clearEntireDatabase,
+  subscribeToResellerStocks,
+  subscribeToBundlingPackages,
+  addBundlingPackage,
+  deleteBundlingPackage,
+  transferStockToReseller,
+  addResellerSaleTransaction,
+  settleResellerTransaction
 } from "./dbService";
 import { 
   Shelf as ShelfType, 
@@ -63,7 +70,9 @@ import {
   BottleSize,
   InvoiceSettings,
   Customer,
-  SaleItem
+  SaleItem,
+  ResellerStock,
+  BundlingPackage
 } from "./types";
 import { 
   ShoppingBag, 
@@ -130,6 +139,33 @@ export default function App() {
   const [salaries, setSalaries] = useState<Salary[]>([]);
   const [cashLedger, setCashLedger] = useState<CashMutation[]>([]);
   const [bottleSizes, setBottleSizes] = useState<BottleSize[]>([]);
+  
+  // Consignment & Bundling States
+  const [resellerStocks, setResellerStocks] = useState<ResellerStock[]>([]);
+  const [bundlingPackages, setBundlingPackages] = useState<BundlingPackage[]>([]);
+  const [showAddBundling, setShowAddBundling] = useState(false);
+  const [newBundling, setNewBundling] = useState({
+    packageName: "",
+    bottleSize: "30ml",
+    essenceMl: 5,
+    alcoholMl: 25,
+    price: 35000
+  });
+  const [showTransferStock, setShowTransferStock] = useState(false);
+  const [transferForm, setTransferForm] = useState({
+    resellerEmail: "",
+    type: "essence" as "essence" | "alcohol" | "bottle",
+    scentName: "",
+    size: "30ml",
+    quantity: 0
+  });
+  const [resellerSaleForm, setResellerSaleForm] = useState({
+    packageId: "",
+    scentName: "",
+    quantity: 1
+  });
+  const [resellerActiveTab, setResellerActiveTab] = useState<"katalog" | "setoran" | "penjualan">("katalog");
+  const [adminActiveConsignmentTab, setAdminActiveConsignmentTab] = useState<"dashboard" | "packages" | "transfers" | "piutang">("dashboard");
 
   // Invoice settings & Print state
   const [invoiceSettings, setInvoiceSettings] = useState<InvoiceSettings>({
@@ -425,6 +461,8 @@ export default function App() {
       setPromoDiscount(config.discountAmount);
       setAdminDiscountInput(config.discountAmount.toString());
     });
+    const unsubResellerStocks = subscribeToResellerStocks(setResellerStocks);
+    const unsubBundlingPackages = subscribeToBundlingPackages(setBundlingPackages);
 
     let unsubSalaries = () => {};
     let unsubLedger = () => {};
@@ -446,6 +484,8 @@ export default function App() {
       unsubInvoice();
       unsubCustomers();
       unsubPromo();
+      unsubResellerStocks();
+      unsubBundlingPackages();
     };
   }, [userRole]);
 
@@ -1106,15 +1146,23 @@ export default function App() {
     let finalEmail = "";
     let finalUsername: string | undefined = undefined;
 
-    if (newClientRole === "client") {
+    if (newClientRole === "client" || newClientRole === "reseller") {
       const usernameVal = newClientEmail.trim().toLowerCase();
-      // Username validation: alphanumeric, no spaces, no @
-      if (usernameVal.includes("@") || usernameVal.includes(" ")) {
-        showToast("Username client tidak boleh mengandung spasi atau karakter '@'!", "error");
-        return;
+      if (usernameVal.includes("@")) {
+        if (usernameVal.includes(" ")) {
+          showToast("Username / Email tidak boleh mengandung spasi!", "error");
+          return;
+        }
+        finalEmail = usernameVal;
+        finalUsername = usernameVal.split("@")[0];
+      } else {
+        if (usernameVal.includes(" ")) {
+          showToast("Username tidak boleh mengandung spasi!", "error");
+          return;
+        }
+        finalEmail = `${usernameVal}@bastikaparfum.local`;
+        finalUsername = usernameVal;
       }
-      finalEmail = `${usernameVal}@bastikaparfum.local`;
-      finalUsername = usernameVal;
     } else {
       const emailVal = newClientEmail.trim().toLowerCase();
       if (!emailVal.includes("@")) {
@@ -1132,7 +1180,6 @@ export default function App() {
       } catch (authErr: any) {
         console.warn("Auth registration info:", authErr);
         if (authErr.code === "auth/email-already-in-use") {
-          // Already exists in auth, that's fine. We will just update Firestore.
           showToast(`Info: Pengguna sudah terdaftar di Auth. Memperbarui hak akses saja.`, "info");
         } else {
           throw new Error(`Gagal mendaftarkan di Firebase Auth: ${authErr.message}`);
@@ -1143,12 +1190,16 @@ export default function App() {
       
       if (createdInAuth) {
         const successMsg = newClientRole === "client" 
-          ? `User @${finalUsername} berhasil didaftarkan sebagai CLIENT dengan kata sandi!`
-          : `Admin ${finalEmail} berhasil didaftarkan sebagai ADMIN dengan kata sandi!`;
+          ? `User @${finalUsername} berhasil didaftarkan sebagai CLIENT!`
+          : newClientRole === "reseller"
+          ? `User ${finalEmail} berhasil didaftarkan sebagai RESELLER!`
+          : `Admin ${finalEmail} berhasil didaftarkan sebagai ADMIN!`;
         showToast(successMsg, "success");
       } else {
         const updateMsg = newClientRole === "client"
           ? `Hak akses @${finalUsername} diperbarui sebagai CLIENT!`
+          : newClientRole === "reseller"
+          ? `Hak akses ${finalEmail} diperbarui sebagai RESELLER!`
           : `Hak akses ${finalEmail} diperbarui sebagai ADMIN!`;
         showToast(updateMsg, "success");
       }
@@ -1537,6 +1588,1082 @@ export default function App() {
     );
   }
 
+  // ==========================================
+  // CONSIGNMENT & BUNDLING HELPER LOGIC
+  // ==========================================
+  const getResellerStockQty = (resellerEmail: string, type: "essence" | "alcohol" | "bottle", nameOrSize?: string) => {
+    const safeEmail = resellerEmail.trim().toLowerCase();
+    const stock = resellerStocks.find(s => 
+      s.resellerEmail === safeEmail &&
+      s.type === type &&
+      (type === "essence" ? s.scentName === nameOrSize : type === "bottle" ? s.size === nameOrSize : true)
+    );
+    return stock ? stock.quantity : 0;
+  };
+
+  const handleResellerSaleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const { packageId, scentName, quantity } = resellerSaleForm;
+    if (!packageId) {
+      showToast("Pilih paket terlebih dahulu!", "error");
+      return;
+    }
+    if (!scentName) {
+      showToast("Pilih aroma parfum terlebih dahulu!", "error");
+      return;
+    }
+    if (quantity <= 0) {
+      showToast("Jumlah minimal 1!", "error");
+      return;
+    }
+
+    const pkg = bundlingPackages.find(p => p.id === packageId);
+    if (!pkg) {
+      showToast("Paket tidak ditemukan!", "error");
+      return;
+    }
+
+    const emailKey = (currentUser?.email || customEmail || "").trim().toLowerCase();
+    const bottleStock = getResellerStockQty(emailKey, "bottle", pkg.bottleSize);
+    const essenceStock = getResellerStockQty(emailKey, "essence", scentName);
+    const alcoholStock = getResellerStockQty(emailKey, "alcohol");
+
+    const requiredBottles = quantity;
+    const requiredEssence = pkg.essenceMl * quantity;
+    const requiredAlcohol = pkg.alcoholMl * quantity;
+
+    if (bottleStock < requiredBottles) {
+      showToast(`Stok botol ${pkg.bottleSize} tidak mencukupi! Tersedia: ${bottleStock} pcs, Butuh: ${requiredBottles} pcs`, "error");
+      return;
+    }
+    if (essenceStock < requiredEssence) {
+      showToast(`Stok bibit aroma ${scentName} tidak mencukupi! Tersedia: ${essenceStock} ml, Butuh: ${requiredEssence} ml`, "error");
+      return;
+    }
+    if (alcoholStock < requiredAlcohol) {
+      showToast(`Stok absolut / pelarut tidak mencukupi! Tersedia: ${alcoholStock} ml, Butuh: ${requiredAlcohol} ml`, "error");
+      return;
+    }
+
+    try {
+      await addResellerSaleTransaction(
+        emailKey,
+        pkg.id,
+        pkg.packageName,
+        scentName,
+        pkg.bottleSize,
+        pkg.essenceMl,
+        pkg.alcoholMl,
+        quantity,
+        pkg.price,
+        emailKey
+      );
+      showToast(`Berhasil mencatat penjualan ${quantity} unit ${pkg.packageName} (${scentName})!`, "success");
+      setResellerSaleForm({ packageId: "", scentName: "", quantity: 1 });
+      setResellerActiveTab("setoran");
+    } catch (err: any) {
+      showToast(err.message, "error");
+    }
+  };
+
+  const handleTransferStockSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const { resellerEmail, type, scentName, size, quantity } = transferForm;
+
+    if (!resellerEmail) {
+      showToast("Pilih reseller tujuan terlebih dahulu!", "error");
+      return;
+    }
+    if (quantity <= 0) {
+      showToast("Jumlah transfer harus lebih dari 0!", "error");
+      return;
+    }
+    if (type === "essence" && !scentName) {
+      showToast("Pilih aroma parfum terlebih dahulu!", "error");
+      return;
+    }
+
+    try {
+      await transferStockToReseller(
+        resellerEmail,
+        type,
+        type === "essence" ? scentName : undefined,
+        type === "bottle" ? size : undefined,
+        quantity,
+        currentUser?.email || customEmail || "admin"
+      );
+      showToast(`Berhasil mentransfer stok ke reseller ${resellerEmail}!`, "success");
+      setTransferForm({
+        resellerEmail: "",
+        type: "essence",
+        scentName: "",
+        size: "30ml",
+        quantity: 0
+      });
+      setShowTransferStock(false);
+    } catch (err: any) {
+      showToast(err.message, "error");
+    }
+  };
+
+  const handleAddBundlingSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const { packageName, bottleSize, essenceMl, alcoholMl, price } = newBundling;
+    if (!packageName.trim()) {
+      showToast("Nama paket wajib diisi!", "error");
+      return;
+    }
+    if (essenceMl <= 0 || alcoholMl <= 0 || price <= 0) {
+      showToast("Nilai volume bibit, absolut, dan harga harus lebih besar dari 0!", "error");
+      return;
+    }
+
+    try {
+      await addBundlingPackage({
+        packageName: packageName.trim(),
+        bottleSize,
+        essenceMl,
+        alcoholMl,
+        price
+      });
+      showToast(`Paket bundling ${packageName} berhasil ditambahkan!`, "success");
+      setNewBundling({
+        packageName: "",
+        bottleSize: "30ml",
+        essenceMl: 5,
+        alcoholMl: 25,
+        price: 35000
+      });
+      setShowAddBundling(false);
+    } catch (err: any) {
+      showToast(err.message, "error");
+    }
+  };
+
+  const handleDeleteBundling = async (pkgId: string, pkgName: string) => {
+    if (confirm(`Hapus paket bundling ${pkgName}?`)) {
+      try {
+        await deleteBundlingPackage(pkgId);
+        showToast(`Paket bundling ${pkgName} berhasil dihapus.`);
+      } catch (err: any) {
+        showToast(err.message, "error");
+      }
+    }
+  };
+
+  const handleSettleTransaction = async (txId: string) => {
+    if (confirm("Apakah Anda yakin ingin menyelesaikan pembayaran (Pelunasan) untuk transaksi ini? Uang setoran akan masuk ke kas besar.")) {
+      try {
+        const operatorEmail = currentUser?.email || customEmail || "admin";
+        await settleResellerTransaction(txId, operatorEmail);
+        showToast("Transaksi berhasil dilunasi dan masuk ke Buku Kas Besar!", "success");
+      } catch (err: any) {
+        showToast(err.message, "error");
+      }
+    }
+  };
+
+  // ==========================================
+  // RESELLER RENDERING LOGIC
+  // ==========================================
+  const renderResellerKatalog = () => {
+    const emailKey = (currentUser?.email || customEmail || "").trim().toLowerCase();
+    const myStocks = resellerStocks.filter(s => s.resellerEmail === emailKey);
+    
+    return (
+      <div className="space-y-6 animate-in fade-in duration-300">
+        <div className="bg-slate-950/40 border border-slate-800 rounded-2xl p-6">
+          <h3 className="text-sm font-bold text-slate-300 mb-4 flex items-center gap-2">
+            <Box className="h-4.5 w-4.5 text-emerald-400" />
+            Gudang Virtual Anda (Stok Barang Titipan Admin)
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800">
+              <span className="text-[10px] uppercase font-bold text-slate-500">Stok Botol Kosong</span>
+              <div className="mt-2 space-y-1">
+                {myStocks.filter(s => s.type === "bottle").length === 0 ? (
+                  <p className="text-xs text-slate-500 italic">Tidak ada stok botol</p>
+                ) : (
+                  myStocks.filter(s => s.type === "bottle").map(s => (
+                    <div key={s.id} className="flex justify-between text-xs text-slate-300">
+                      <span>Botol {s.size}</span>
+                      <span className="font-bold text-white">{s.quantity} pcs</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800">
+              <span className="text-[10px] uppercase font-bold text-slate-500">Stok Bibit Aroma (ml)</span>
+              <div className="mt-2 space-y-1 max-h-32 overflow-y-auto">
+                {myStocks.filter(s => s.type === "essence").length === 0 ? (
+                  <p className="text-xs text-slate-500 italic">Tidak ada stok bibit</p>
+                ) : (
+                  myStocks.filter(s => s.type === "essence").map(s => (
+                    <div key={s.id} className="flex justify-between text-xs text-slate-300">
+                      <span>{s.scentName}</span>
+                      <span className="font-bold text-white">{s.quantity} ml</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800">
+              <span className="text-[10px] uppercase font-bold text-slate-500">Stok Cairan Pelarut (Absolut)</span>
+              <div className="mt-2 space-y-1">
+                {myStocks.filter(s => s.type === "alcohol").length === 0 ? (
+                  <p className="text-xs text-slate-300">Absolut: <span className="font-bold text-white">0 ml</span></p>
+                ) : (
+                  myStocks.filter(s => s.type === "alcohol").map(s => (
+                    <div key={s.id} className="flex justify-between text-xs text-slate-300">
+                      <span>Absolut / Campuran</span>
+                      <span className="font-bold text-white">{s.quantity} ml</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <h3 className="text-sm font-bold text-slate-300 mb-4 flex items-center gap-2">
+            <ShoppingBag className="h-4.5 w-4.5 text-emerald-400" />
+            Daftar Paket Bundling Tersedia
+          </h3>
+          {bundlingPackages.length === 0 ? (
+            <div className="bg-slate-950/40 border border-slate-800 rounded-2xl p-8 text-center text-slate-500 italic">
+              Belum ada paket bundling yang dikonfigurasi oleh Admin.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {bundlingPackages.map(pkg => (
+                <div key={pkg.id} className="bg-slate-950/40 border border-slate-800 rounded-2xl p-5 hover:border-slate-700 transition-all flex flex-col justify-between">
+                  <div>
+                    <h4 className="text-base font-bold text-white">{pkg.packageName}</h4>
+                    <p className="text-xs text-slate-400 mt-1">Ukuran Botol: {pkg.bottleSize}</p>
+                    
+                    <div className="mt-4 pt-4 border-t border-slate-800/80 space-y-2">
+                      <span className="text-[10px] uppercase font-bold text-slate-500 block">Resep Komponen / Unit:</span>
+                      <div className="flex justify-between text-xs text-slate-300">
+                        <span>Botol {pkg.bottleSize}</span>
+                        <span>1 pcs</span>
+                      </div>
+                      <div className="flex justify-between text-xs text-slate-300">
+                        <span>Bibit Parfum (Aroma bebas)</span>
+                        <span>{pkg.essenceMl} ml</span>
+                      </div>
+                      <div className="flex justify-between text-xs text-slate-300">
+                        <span>Absolut / Campuran</span>
+                        <span>{pkg.alcoholMl} ml</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-6 pt-4 border-t border-slate-800/80 flex justify-between items-center">
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-slate-500">Harga Jual</span>
+                      <p className="text-lg font-bold text-emerald-400">Rp {pkg.price.toLocaleString("id-ID")}</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setResellerSaleForm(prev => ({ ...prev, packageId: pkg.id }));
+                        setResellerActiveTab("penjualan");
+                      }}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-2 px-4 rounded-xl transition-all cursor-pointer"
+                    >
+                      Jual Paket
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const renderResellerPenjualanForm = () => {
+    const emailKey = (currentUser?.email || customEmail || "").trim().toLowerCase();
+    const myEssences = resellerStocks.filter(s => 
+      s.resellerEmail === emailKey && 
+      s.type === "essence" && 
+      s.quantity > 0
+    );
+
+    return (
+      <div className="max-w-xl mx-auto bg-slate-950/40 border border-slate-800 rounded-2xl p-6 shadow-xl animate-in fade-in duration-300">
+        <h3 className="text-base font-bold text-white mb-6 flex items-center gap-2 border-b border-slate-800 pb-3">
+          <PlusCircle className="h-5 w-5 text-emerald-400" />
+          Form Input Penjualan Paket Bundling
+        </h3>
+
+        <form onSubmit={handleResellerSaleSubmit} className="space-y-5">
+          <div>
+            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Pilih Paket Bundling</label>
+            <select
+              value={resellerSaleForm.packageId}
+              onChange={(e) => setResellerSaleForm(prev => ({ ...prev, packageId: e.target.value }))}
+              className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 text-white cursor-pointer"
+              required
+            >
+              <option value="">-- Pilih Paket --</option>
+              {bundlingPackages.map(pkg => (
+                <option key={pkg.id} value={pkg.id}>
+                  {pkg.packageName} - Rp {pkg.price.toLocaleString("id-ID")}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Pilih Aroma Bibit Parfum</label>
+            <select
+              value={resellerSaleForm.scentName}
+              onChange={(e) => setResellerSaleForm(prev => ({ ...prev, scentName: e.target.value }))}
+              className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 text-white cursor-pointer"
+              required
+            >
+              <option value="">-- Pilih Aroma --</option>
+              {myEssences.map(e => (
+                <option key={e.id} value={e.scentName}>
+                  {e.scentName} (Sisa: {e.quantity} ml)
+                </option>
+              ))}
+            </select>
+            {myEssences.length === 0 && (
+              <p className="text-xs text-rose-400 mt-1.5 italic">
+                Peringatan: Anda tidak memiliki stok bibit aroma titipan yang tersedia. Silakan hubungi Admin untuk transfer stok bibit.
+              </p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Jumlah Paket Terjual (Unit)</label>
+            <input
+              type="number"
+              min="1"
+              value={resellerSaleForm.quantity}
+              onChange={(e) => setResellerSaleForm(prev => ({ ...prev, quantity: parseInt(e.target.value) || 1 }))}
+              className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 text-white"
+              required
+            />
+          </div>
+
+          {resellerSaleForm.packageId && resellerSaleForm.scentName && (() => {
+            const pkg = bundlingPackages.find(p => p.id === resellerSaleForm.packageId);
+            if (!pkg) return null;
+            const totalRequiredBottle = resellerSaleForm.quantity;
+            const totalRequiredEssence = pkg.essenceMl * resellerSaleForm.quantity;
+            const totalRequiredAlcohol = pkg.alcoholMl * resellerSaleForm.quantity;
+
+            const availBottle = getResellerStockQty(emailKey, "bottle", pkg.bottleSize);
+            const availEssence = getResellerStockQty(emailKey, "essence", resellerSaleForm.scentName);
+            const availAlcohol = getResellerStockQty(emailKey, "alcohol");
+
+            const isBottleOk = availBottle >= totalRequiredBottle;
+            const isEssenceOk = availEssence >= totalRequiredEssence;
+            const isAlcoholOk = availAlcohol >= totalRequiredAlcohol;
+            const canSubmit = isBottleOk && isEssenceOk && isAlcoholOk;
+
+            return (
+              <div className="bg-slate-900/80 rounded-xl p-4 border border-slate-800 space-y-3">
+                <span className="text-[10px] uppercase font-bold text-slate-500">Estimasi Pengurangan Stok Anda:</span>
+                <div className="space-y-1.5 text-xs">
+                  <div className="flex justify-between">
+                    <span>Botol {pkg.bottleSize}:</span>
+                    <span className={isBottleOk ? "text-emerald-400" : "text-rose-400 font-bold"}>
+                      {totalRequiredBottle} pcs (Tersedia: {availBottle} pcs)
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Bibit {resellerSaleForm.scentName}:</span>
+                    <span className={isEssenceOk ? "text-emerald-400" : "text-rose-400 font-bold"}>
+                      {totalRequiredEssence} ml (Tersedia: {availEssence} ml)
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Absolut / Campuran:</span>
+                    <span className={isAlcoholOk ? "text-emerald-400" : "text-rose-400 font-bold"}>
+                      {totalRequiredAlcohol} ml (Tersedia: {availAlcohol} ml)
+                    </span>
+                  </div>
+                </div>
+                {!canSubmit && (
+                  <p className="text-[11px] text-rose-400 font-semibold italic">
+                    Stok tidak mencukupi untuk melakukan transaksi ini!
+                  </p>
+                )}
+              </div>
+            );
+          })()}
+
+          <button
+            type="submit"
+            className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm py-3 px-4 rounded-xl transition-all cursor-pointer flex justify-center items-center gap-2"
+          >
+            <Check className="h-4.5 w-4.5" />
+            Konfirmasi & Jual Paket
+          </button>
+        </form>
+      </div>
+    );
+  };
+
+  const renderResellerSetoran = () => {
+    const emailKey = (currentUser?.email || customEmail || "").trim().toLowerCase();
+    const resellerTxs = transactions.filter(t => 
+      t.resellerEmail?.trim().toLowerCase() === emailKey &&
+      t.isConsignment === true &&
+      t.type === "sale"
+    );
+
+    const unpaidTxs = resellerTxs.filter(t => t.paymentStatus === "Belum Dibayar");
+    const totalUnpaidAmount = unpaidTxs.reduce((sum, t) => sum + t.totalPrice, 0);
+    const paidTxs = resellerTxs.filter(t => t.paymentStatus === "Lunas");
+    const totalPaidAmount = paidTxs.reduce((sum, t) => sum + t.totalPrice, 0);
+    const totalSoldUnits = resellerTxs.reduce((sum, t) => sum + (t.bottleCount || 0), 0);
+
+    return (
+      <div className="space-y-6 animate-in fade-in duration-300">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="bg-rose-950/30 border border-rose-900/50 rounded-2xl p-6">
+            <span className="text-[10px] uppercase font-bold text-rose-400">Total Belum Disetor (Piutang)</span>
+            <p className="text-2xl font-bold text-rose-300 mt-2">Rp {totalUnpaidAmount.toLocaleString("id-ID")}</p>
+            <p className="text-xs text-rose-400/80 mt-1">Harus segera disetor ke Admin Toko.</p>
+          </div>
+
+          <div className="bg-emerald-950/30 border border-emerald-900/50 rounded-2xl p-6">
+            <span className="text-[10px] uppercase font-bold text-emerald-400">Total Sudah Disetor</span>
+            <p className="text-2xl font-bold text-emerald-300 mt-2">Rp {totalPaidAmount.toLocaleString("id-ID")}</p>
+            <p className="text-xs text-emerald-400/80 mt-1">Selesai disetor ke Admin Utama.</p>
+          </div>
+
+          <div className="bg-slate-950/40 border border-slate-800 rounded-2xl p-6">
+            <span className="text-[10px] uppercase font-bold text-slate-400">Total Volume Penjualan</span>
+            <p className="text-2xl font-bold text-slate-100 mt-2">{totalSoldUnits} Unit</p>
+            <p className="text-xs text-slate-400 mt-1">Total seluruh paket bundling laku.</p>
+          </div>
+        </div>
+
+        <div className="bg-slate-950/40 border border-slate-800 rounded-2xl p-6">
+          <h3 className="text-sm font-bold text-slate-300 mb-4">Riwayat Penjualan Paket Anda</h3>
+          
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-slate-800 text-slate-400 font-semibold">
+                  <th className="py-3 px-4">Tanggal / Waktu</th>
+                  <th className="py-3 px-4">Nama Paket</th>
+                  <th className="py-3 px-4">Aroma</th>
+                  <th className="py-3 px-4 text-center">Jumlah</th>
+                  <th className="py-3 px-4 text-right">Total Harga</th>
+                  <th className="py-3 px-4 text-center">Status Setoran</th>
+                </tr>
+              </thead>
+              <tbody>
+                {resellerTxs.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-8 text-center text-slate-500 italic">
+                      Belum ada riwayat penjualan paket bundling.
+                    </td>
+                  </tr>
+                ) : (
+                  resellerTxs.map(t => (
+                    <tr key={t.id} className="border-b border-slate-800/60 hover:bg-slate-900/20">
+                      <td className="py-3 px-4 text-slate-300">
+                        {new Date(t.timestamp).toLocaleString("id-ID")}
+                      </td>
+                      <td className="py-3 px-4 font-bold text-white">{t.packageName || "Paket"}</td>
+                      <td className="py-3 px-4 text-slate-300">{t.scentName}</td>
+                      <td className="py-3 px-4 text-center text-slate-100 font-semibold">{t.bottleCount} unit</td>
+                      <td className="py-3 px-4 text-right text-emerald-400 font-bold">
+                        Rp {t.totalPrice.toLocaleString("id-ID")}
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <span className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-bold ${
+                          t.paymentStatus === "Lunas" 
+                            ? "bg-emerald-950 text-emerald-400 border border-emerald-900/50" 
+                            : "bg-rose-950 text-rose-400 border border-rose-900/50"
+                        }`}>
+                          {t.paymentStatus || "Belum Dibayar"}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ==========================================
+  // ADMIN CONSIGNMENT & BUNDLING VIEW
+  // ==========================================
+  const renderConsignmentAdminView = () => {
+    const resellers = userWhitelist.filter(u => u.role === "reseller");
+    const consignmentSales = transactions.filter(t => t.isConsignment === true && t.type === "sale");
+
+    return (
+      <div className="space-y-6 animate-in fade-in duration-300">
+        <div className="flex border-b border-slate-200 gap-1 overflow-x-auto pb-0.5">
+          <button
+            onClick={() => setAdminActiveConsignmentTab("dashboard")}
+            className={`px-4 py-2 text-xs font-bold rounded-t-xl transition-all flex items-center gap-1.5 cursor-pointer ${
+              adminActiveConsignmentTab === "dashboard"
+                ? "bg-emerald-500 text-white font-extrabold"
+                : "text-slate-500 hover:bg-slate-100"
+            }`}
+          >
+            <Box className="h-4 w-4" />
+            Gudang Virtual Reseller
+          </button>
+          <button
+            onClick={() => setAdminActiveConsignmentTab("packages")}
+            className={`px-4 py-2 text-xs font-bold rounded-t-xl transition-all flex items-center gap-1.5 cursor-pointer ${
+              adminActiveConsignmentTab === "packages"
+                ? "bg-emerald-500 text-white font-extrabold"
+                : "text-slate-500 hover:bg-slate-100"
+            }`}
+          >
+            <ShoppingBag className="h-4 w-4" />
+            Produk Bundling
+          </button>
+          <button
+            onClick={() => setAdminActiveConsignmentTab("piutang")}
+            className={`px-4 py-2 text-xs font-bold rounded-t-xl transition-all flex items-center gap-1.5 cursor-pointer ${
+              adminActiveConsignmentTab === "piutang"
+                ? "bg-emerald-500 text-white font-extrabold"
+                : "text-slate-500 hover:bg-slate-100"
+            }`}
+          >
+            <Wallet className="h-4 w-4" />
+            Manajemen Piutang
+          </button>
+        </div>
+
+        {adminActiveConsignmentTab === "dashboard" && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2 bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
+              <h3 className="font-bold text-sm text-slate-950 flex items-center gap-2">
+                <Box className="h-4.5 w-4.5 text-emerald-600" />
+                Stok Barang Titipan Reseller
+              </h3>
+              {resellers.length === 0 ? (
+                <p className="text-xs text-slate-500 italic py-4">Belum ada reseller yang terdaftar. Tambahkan reseller di menu "Hak Akses Client".</p>
+              ) : (
+                <div className="space-y-4">
+                  {resellers.map(res => {
+                    const myStocks = resellerStocks.filter(s => s.resellerEmail === res.email.trim().toLowerCase());
+                    const unpaidForThisReseller = consignmentSales.filter(t => t.resellerEmail?.trim().toLowerCase() === res.email.trim().toLowerCase() && t.paymentStatus === "Belum Dibayar");
+                    const unpaidAmount = unpaidForThisReseller.reduce((sum, t) => sum + t.totalPrice, 0);
+
+                    return (
+                      <div key={res.email} className="bg-slate-50 rounded-xl p-4 border border-slate-200 space-y-3">
+                        <div className="flex justify-between items-center border-b border-slate-200 pb-2">
+                          <div>
+                            <p className="text-xs font-bold text-slate-900">{res.username || res.email}</p>
+                            <p className="text-[10px] text-slate-500">{res.email}</p>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-[9px] uppercase font-bold text-slate-400 block">Piutang Terhutang</span>
+                            <span className={`text-xs font-bold ${unpaidAmount > 0 ? "text-rose-600 animate-pulse" : "text-emerald-600"}`}>
+                              Rp {unpaidAmount.toLocaleString("id-ID")}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2 text-[11px]">
+                          <div>
+                            <span className="font-semibold text-slate-500 block text-[9px] uppercase">Botol</span>
+                            {myStocks.filter(s => s.type === "bottle").length === 0 ? (
+                              <span className="text-slate-400 italic">0 pcs</span>
+                            ) : (
+                              myStocks.filter(s => s.type === "bottle").map(s => (
+                                <div key={s.id} className="flex justify-between text-slate-700 pr-2">
+                                  <span>{s.size}:</span>
+                                  <span className="font-bold">{s.quantity} pcs</span>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                          <div>
+                            <span className="font-semibold text-slate-500 block text-[9px] uppercase">Bibit Aroma</span>
+                            <div className="max-h-24 overflow-y-auto space-y-0.5">
+                              {myStocks.filter(s => s.type === "essence").length === 0 ? (
+                                <span className="text-slate-400 italic">0 ml</span>
+                              ) : (
+                                myStocks.filter(s => s.type === "essence").map(s => (
+                                  <div key={s.id} className="flex justify-between text-slate-700 pr-2">
+                                    <span className="truncate max-w-[60px]">{s.scentName}:</span>
+                                    <span className="font-bold">{s.quantity} ml</span>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          </div>
+                          <div>
+                            <span className="font-semibold text-slate-500 block text-[9px] uppercase">Pelarut</span>
+                            {myStocks.filter(s => s.type === "alcohol").length === 0 ? (
+                              <span className="text-slate-400 italic">0 ml</span>
+                            ) : (
+                              myStocks.filter(s => s.type === "alcohol").map(s => (
+                                <div key={s.id} className="flex justify-between text-slate-700">
+                                  <span>Absolut:</span>
+                                  <span className="font-bold">{s.quantity} ml</span>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm h-fit space-y-4">
+              <h3 className="font-bold text-sm text-slate-950 flex items-center gap-2">
+                <PlusCircle className="h-4.5 w-4.5 text-emerald-600" />
+                Transfer Stok Baru ke Reseller
+              </h3>
+              <form onSubmit={handleTransferStockSubmit} className="space-y-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Reseller Tujuan</label>
+                  <select
+                    value={transferForm.resellerEmail}
+                    onChange={(e) => setTransferForm(prev => ({ ...prev, resellerEmail: e.target.value }))}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800 cursor-pointer font-semibold"
+                    required
+                  >
+                    <option value="">-- Pilih Reseller --</option>
+                    {resellers.map(res => (
+                      <option key={res.email} value={res.email}>{res.username || res.email}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Tipe Komponen</label>
+                  <select
+                    value={transferForm.type}
+                    onChange={(e) => setTransferForm(prev => ({ ...prev, type: e.target.value as any, scentName: "", size: "30ml" }))}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800 cursor-pointer font-semibold"
+                    required
+                  >
+                    <option value="essence">Bibit Parfum (Essence)</option>
+                    <option value="bottle">Botol Kosong</option>
+                    <option value="alcohol">Absolut (Pelarut)</option>
+                  </select>
+                </div>
+
+                {transferForm.type === "essence" && (
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Pilih Aroma</label>
+                    <select
+                      value={transferForm.scentName}
+                      onChange={(e) => setTransferForm(prev => ({ ...prev, scentName: e.target.value }))}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800 cursor-pointer font-semibold"
+                      required
+                    >
+                      <option value="">-- Pilih Aroma --</option>
+                      {prices.map(p => (
+                        <option key={p.id} value={p.scentName}>{p.scentName}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {transferForm.type === "bottle" && (
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Ukuran Botol</label>
+                    <select
+                      value={transferForm.size}
+                      onChange={(e) => setTransferForm(prev => ({ ...prev, size: e.target.value }))}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800 cursor-pointer font-semibold"
+                      required
+                    >
+                      {bottleSizes.map(bs => (
+                        <option key={bs.id} value={bs.name}>{bs.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                    Jumlah / Volume ({transferForm.type === "bottle" ? "pcs" : "ml"})
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={transferForm.quantity || ""}
+                    onChange={(e) => setTransferForm(prev => ({ ...prev, quantity: parseInt(e.target.value) || 0 }))}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800 font-semibold"
+                    required
+                  />
+                </div>
+
+                {(() => {
+                  let availMaster = 0;
+                  if (transferForm.type === "bottle") {
+                    availMaster = stocks.find(s => s.type === "bottle" && s.size === transferForm.size)?.quantity || 0;
+                  } else if (transferForm.type === "essence") {
+                    availMaster = stocks.find(s => s.type === "essence" && s.scentName === transferForm.scentName)?.quantity || 0;
+                  } else {
+                    availMaster = stocks.find(s => s.type === "alcohol")?.quantity || 0;
+                  }
+
+                  const hasEnough = availMaster >= transferForm.quantity;
+
+                  return (
+                    <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-1">
+                      <div className="flex justify-between text-[11px] text-slate-500">
+                        <span>Stok Gudang Utama:</span>
+                        <span className={`font-bold ${hasEnough ? "text-emerald-600" : "text-rose-600"}`}>
+                          {availMaster} {transferForm.type === "bottle" ? "pcs" : "ml"}
+                        </span>
+                      </div>
+                      {!hasEnough && transferForm.quantity > 0 && (
+                        <p className="text-[10px] text-rose-500 italic">Peringatan: Stok utama tidak cukup!</p>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                <button
+                  type="submit"
+                  className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs py-2 rounded-xl transition-all cursor-pointer shadow"
+                >
+                  Konfirmasi Transfer Stok
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {adminActiveConsignmentTab === "packages" && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2 bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
+              <h3 className="font-bold text-sm text-slate-950 flex items-center gap-2">
+                <ShoppingBag className="h-4.5 w-4.5 text-emerald-600" />
+                Daftar Paket Bundling
+              </h3>
+              {bundlingPackages.length === 0 ? (
+                <p className="text-xs text-slate-500 italic py-4">Belum ada paket bundling yang dibuat.</p>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {bundlingPackages.map(pkg => (
+                    <div key={pkg.id} className="border border-slate-200 rounded-xl p-4 bg-slate-50 flex flex-col justify-between">
+                      <div>
+                        <div className="flex justify-between items-start">
+                          <h4 className="text-xs font-bold text-slate-900">{pkg.packageName}</h4>
+                          <button
+                            onClick={() => handleDeleteBundling(pkg.id, pkg.packageName)}
+                            className="text-rose-500 hover:text-rose-700 p-1"
+                            title="Hapus Paket"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                        <p className="text-[10px] text-slate-500 mt-1">Ukuran Botol: {pkg.bottleSize}</p>
+                        
+                        <div className="mt-3 pt-3 border-t border-slate-200 space-y-1 text-[11px] text-slate-700">
+                          <div className="flex justify-between">
+                            <span>Kebutuhan Bibit:</span>
+                            <span className="font-bold">{pkg.essenceMl} ml</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Kebutuhan Absolut:</span>
+                            <span className="font-bold">{pkg.alcoholMl} ml</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 pt-2 border-t border-slate-200 flex justify-between items-center text-xs">
+                        <span className="font-semibold text-slate-500">Harga Jual:</span>
+                        <span className="font-extrabold text-emerald-600">Rp {pkg.price.toLocaleString("id-ID")}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm h-fit space-y-4">
+              <h3 className="font-bold text-sm text-slate-950 flex items-center gap-2">
+                <PlusCircle className="h-4.5 w-4.5 text-emerald-600" />
+                Buat Koleksi Paket Bundling Baru
+              </h3>
+              <form onSubmit={handleAddBundlingSubmit} className="space-y-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Nama Paket</label>
+                  <input
+                    type="text"
+                    placeholder="Contoh: Paket 30ml Medium"
+                    value={newBundling.packageName}
+                    onChange={(e) => setNewBundling(prev => ({ ...prev, packageName: e.target.value }))}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800 font-semibold"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Ukuran Botol</label>
+                  <select
+                    value={newBundling.bottleSize}
+                    onChange={(e) => setNewBundling(prev => ({ ...prev, bottleSize: e.target.value }))}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800 cursor-pointer font-semibold"
+                    required
+                  >
+                    {bottleSizes.map(bs => (
+                      <option key={bs.id} value={bs.name}>{bs.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Bibit (ml)</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={newBundling.essenceMl || ""}
+                      onChange={(e) => setNewBundling(prev => ({ ...prev, essenceMl: parseInt(e.target.value) || 0 }))}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 font-semibold"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Absolut (ml)</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={newBundling.alcoholMl || ""}
+                      onChange={(e) => setNewBundling(prev => ({ ...prev, alcoholMl: parseInt(e.target.value) || 0 }))}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 font-semibold"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Harga Jual (Rp)</label>
+                  <input
+                    type="number"
+                    min="1000"
+                    value={newBundling.price || ""}
+                    onChange={(e) => setNewBundling(prev => ({ ...prev, price: parseInt(e.target.value) || 0 }))}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 font-semibold"
+                    required
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs py-2 rounded-xl transition-all cursor-pointer shadow"
+                >
+                  Buat Koleksi Paket
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {adminActiveConsignmentTab === "piutang" && (
+          <div className="space-y-6">
+            <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
+              <h3 className="font-bold text-sm text-slate-950 flex items-center gap-2">
+                <Wallet className="h-4.5 w-4.5 text-emerald-600" />
+                Daftar Riwayat Piutang Konsinyasi Reseller
+              </h3>
+              
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-slate-500 font-semibold bg-slate-50">
+                      <th className="py-3 px-4">Tanggal Penjualan</th>
+                      <th className="py-3 px-4">Reseller</th>
+                      <th className="py-3 px-4">Detail Paket & Aroma</th>
+                      <th className="py-3 px-4 text-center">Jumlah (Unit)</th>
+                      <th className="py-3 px-4 text-right">Piutang Setoran</th>
+                      <th className="py-3 px-4 text-center">Status</th>
+                      <th className="py-3 px-4 text-center">Aksi Pelunasan</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {consignmentSales.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-8 text-center text-slate-500 italic">
+                          Belum ada transaksi penjualan konsinyasi dari reseller.
+                        </td>
+                      </tr>
+                    ) : (
+                      consignmentSales.map(t => (
+                        <tr key={t.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                          <td className="py-3 px-4 text-slate-600">
+                            {new Date(t.timestamp).toLocaleString("id-ID")}
+                          </td>
+                          <td className="py-3 px-4">
+                            <span className="font-bold text-slate-900">{t.resellerEmail}</span>
+                          </td>
+                          <td className="py-3 px-4 font-bold text-slate-800">
+                            {t.packageName || "Paket"} <span className="font-normal text-slate-500">({t.scentName})</span>
+                          </td>
+                          <td className="py-3 px-4 text-center font-semibold text-slate-700">
+                            {t.bottleCount} pcs
+                          </td>
+                          <td className="py-3 px-4 text-right font-extrabold text-emerald-600">
+                            Rp {t.totalPrice.toLocaleString("id-ID")}
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              t.paymentStatus === "Lunas"
+                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                : "bg-rose-50 text-rose-700 border border-rose-200 animate-pulse"
+                            }`}>
+                              {t.paymentStatus || "Belum Dibayar"}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            {t.paymentStatus !== "Lunas" ? (
+                              <button
+                                onClick={() => handleSettleTransaction(t.id)}
+                                className="bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-[10px] py-1 px-3 rounded-lg transition-colors cursor-pointer shadow-sm"
+                              >
+                                Pelunasan
+                              </button>
+                            ) : (
+                              <span className="text-[10px] text-slate-400 font-bold italic">Selesai (Lunas)</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ==========================================
+  // RESELLER FULL LAYOUT REDIRECTION
+  // ==========================================
+  if (userRole === "reseller") {
+    return (
+      <div className="min-h-screen bg-slate-900 flex flex-col md:flex-row text-slate-100 selection:bg-emerald-500 selection:text-white font-sans">
+        {/* Toast Notification */}
+        {toast && (
+          <div id="toast-notif" className={`fixed bottom-5 right-5 z-50 flex items-center gap-3 py-3 px-5 rounded-xl shadow-2xl border transition-all duration-300 transform translate-y-0 ${
+            toast.type === "success" ? "bg-emerald-900 text-emerald-100 border-emerald-700" :
+            toast.type === "error" ? "bg-rose-950 text-rose-100 border-rose-800" :
+            "bg-slate-900 text-slate-100 border-slate-700"
+          }`}>
+            {toast.type === "success" && <Check className="h-5 w-5 text-emerald-400" />}
+            {toast.type === "error" && <AlertCircle className="h-5 w-5 text-rose-400" />}
+            {toast.type === "info" && <Info className="h-5 w-5 text-teal-400" />}
+            <span className="text-xs font-semibold">{toast.message}</span>
+          </div>
+        )}
+
+        {/* Reseller Sidebar */}
+        <aside className="w-full md:w-64 bg-slate-950 text-slate-300 flex flex-col border-r border-slate-800 shrink-0">
+          <div className="p-6 border-b border-slate-800 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="h-9 w-9 bg-white rounded-xl flex items-center justify-center shadow-md overflow-hidden p-0.5">
+                <img src={invoiceSettings?.appIconUrl || "/icon.jpg"} alt="Bastika Logo" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+              </div>
+              <div>
+                <h2 className="font-bold font-display text-white tracking-tight text-sm">BASTIKA RESELLER</h2>
+                <span className="text-[10px] text-emerald-400 font-semibold tracking-wider uppercase">KONSINYASI</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="px-6 py-4 border-b border-slate-800 bg-slate-900/40">
+            <p className="text-[10px] font-semibold text-slate-500 uppercase">Reseller Aktif</p>
+            <p className="text-xs font-bold text-white truncate mt-1">{currentUser?.email || customEmail}</p>
+          </div>
+
+          <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
+            <button
+              onClick={() => setResellerActiveTab("katalog")}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition-colors cursor-pointer ${
+                resellerActiveTab === "katalog" ? "bg-emerald-600 text-white font-bold" : "text-slate-400 hover:bg-slate-800 hover:text-white"
+              }`}
+            >
+              <ShoppingBag className="h-4 w-4" />
+              Katalog Paket Titipan
+            </button>
+
+            <button
+              onClick={() => setResellerActiveTab("penjualan")}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition-colors cursor-pointer ${
+                resellerActiveTab === "penjualan" ? "bg-emerald-600 text-white font-bold" : "text-slate-400 hover:bg-slate-800 hover:text-white"
+              }`}
+            >
+              <PlusCircle className="h-4 w-4" />
+              Form Input Penjualan
+            </button>
+
+            <button
+              onClick={() => setResellerActiveTab("setoran")}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition-colors cursor-pointer ${
+                resellerActiveTab === "setoran" ? "bg-emerald-600 text-white font-bold" : "text-slate-400 hover:bg-slate-800 hover:text-white"
+              }`}
+            >
+              <Wallet className="h-4 w-4" />
+              Status Setoran Uang
+            </button>
+          </nav>
+
+          <div className="p-4 border-t border-slate-800 bg-slate-900/40">
+            <button
+              onClick={handleSignOut}
+              className="w-full flex items-center justify-center gap-2 bg-slate-800 hover:bg-red-950 hover:text-red-300 hover:border-red-900 border border-slate-700 text-slate-300 text-xs font-semibold py-2 px-3 rounded-lg transition-colors cursor-pointer"
+            >
+              <LogOut className="h-4 w-4" />
+              Keluar Sistem
+            </button>
+          </div>
+        </aside>
+
+        {/* Reseller Main Panel */}
+        <main className="flex-1 flex flex-col min-w-0 bg-slate-900 text-slate-100 overflow-y-auto">
+          {/* Header */}
+          <header className="bg-slate-950 border-b border-slate-800 py-4 px-6 flex items-center justify-between">
+            <div>
+              <h1 className="text-lg font-bold font-display text-white tracking-tight">
+                {resellerActiveTab === "katalog" ? "Katalog Paket Konsinyasi" :
+                 resellerActiveTab === "penjualan" ? "Input Penjualan Bundling" :
+                 "Status Tagihan & Setoran"}
+              </h1>
+              <p className="text-xs text-slate-400">Portal Reseller Resmi Bastika Parfum</p>
+            </div>
+          </header>
+
+          {/* Content views */}
+          <div className="p-6">
+            {resellerActiveTab === "katalog" && renderResellerKatalog()}
+            {resellerActiveTab === "penjualan" && renderResellerPenjualanForm()}
+            {resellerActiveTab === "setoran" && renderResellerSetoran()}
+          </div>
+        </main>
+      </div>
+    );
+  }
+
   // MAIN DASHBOARD LAYOUT
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row text-slate-800 selection:bg-emerald-500 selection:text-white font-sans">
@@ -1649,6 +2776,17 @@ export default function App() {
 
           {userRole === "admin" && (
             <>
+              <button
+                id="nav-consignment-btn"
+                onClick={() => setActiveTab("consignment")}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition-colors cursor-pointer ${
+                  activeTab === "consignment" ? "bg-emerald-600 text-white font-bold" : "text-slate-400 hover:bg-slate-800 hover:text-white"
+                }`}
+              >
+                <Layers className="h-4 w-4" />
+                Konsinyasi & Bundling
+              </button>
+
               <button
                 id="nav-purchases-btn"
                 onClick={() => setActiveTab("purchases")}
@@ -4165,18 +5303,19 @@ export default function App() {
                         className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
                       >
                         <option value="client">Client (Username - Hanya Input Kasir & Lihat Stok)</option>
+                        <option value="reseller">Reseller Bundling (Email / Username - Dashboard Penjualan)</option>
                         <option value="admin">Admin (Email Gmail - Akses Penuh Seluruh Sistem)</option>
                       </select>
                     </div>
 
                     <div>
                       <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-                        {newClientRole === "client" ? "Nama Pengguna / Username (Client)" : "Alamat Email Gmail (Admin)"}
+                        {newClientRole === "client" ? "Nama Pengguna / Username (Client)" : newClientRole === "reseller" ? "Username / Email (Reseller)" : "Alamat Email Gmail (Admin)"}
                       </label>
                       <input
                         id="client-email-input"
                         type={newClientRole === "client" ? "text" : "email"}
-                        placeholder={newClientRole === "client" ? "Contoh: budi, tika, kasir1 (tanpa spasi/@)" : "Contoh: adminbaru@gmail.com"}
+                        placeholder={newClientRole === "client" ? "Contoh: budi, tika, kasir1 (tanpa spasi/@)" : newClientRole === "reseller" ? "Contoh: reseller1 atau budireseller@gmail.com" : "Contoh: adminbaru@gmail.com"}
                         value={newClientEmail}
                         onChange={(e) => setNewClientEmail(e.target.value)}
                         className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
@@ -4185,6 +5324,8 @@ export default function App() {
                       <p className="text-[10px] text-slate-400 mt-1">
                         {newClientRole === "client" 
                           ? "Penting: Masukkan username unik tanpa spasi dan tanda '@'."
+                          : newClientRole === "reseller"
+                          ? "Penting: Masukkan username atau email Google / Gmail untuk login reseller."
                           : "Penting: Masukkan alamat email Google / Gmail yang valid."}
                       </p>
                     </div>
@@ -5163,6 +6304,15 @@ export default function App() {
                   </button>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* ==========================================
+              11B. CONSIGNMENT & BUNDLING VIEW (Admin Only)
+              ========================================== */}
+          {activeTab === "consignment" && userRole === "admin" && (
+            <div className="max-w-6xl mx-auto space-y-6 animate-in fade-in duration-200">
+              {renderConsignmentAdminView()}
             </div>
           )}
 

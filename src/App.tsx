@@ -160,6 +160,21 @@ export default function App() {
   const [searchColumn, setSearchColumn] = useState("all");
   const [syncStatus, setSyncStatus] = useState<"synced" | "offline" | "syncing">("synced");
 
+  // History & Transactions filter state variables
+  const [historyFilterStartDate, setHistoryFilterStartDate] = useState("");
+  const [historyFilterEndDate, setHistoryFilterEndDate] = useState("");
+  const [historyFilterMonth, setHistoryFilterMonth] = useState(""); // Format: "MM" (01 to 12)
+  const [historyFilterYear, setHistoryFilterYear] = useState(""); // Format: "YYYY"
+
+  // Sales cashier list filtering states
+  const [salesSearchTerm, setSalesSearchTerm] = useState("");
+  const [salesSearchColumn, setSalesSearchColumn] = useState("all"); // 'all', 'customerName', 'scentName', 'bottle', 'totalPrice'
+  const [salesSearchCaseSensitive, setSalesSearchCaseSensitive] = useState(false);
+  const [salesFilterStartDate, setSalesFilterStartDate] = useState("");
+  const [salesFilterEndDate, setSalesFilterEndDate] = useState("");
+  const [salesFilterMonth, setSalesFilterMonth] = useState(""); // Format: "MM" (01 to 12)
+  const [salesFilterYear, setSalesFilterYear] = useState(""); // Format: "YYYY"
+
   // Input forms state
   const [newShelf, setNewShelf] = useState({ rackNumber: "", scentName: "", pricePerMl: 3500 });
   const [editingPrice, setEditingPrice] = useState<{ scentName: string; pricePerMl: number } | null>(null);
@@ -1659,6 +1674,17 @@ export default function App() {
               </button>
 
               <button
+                id="nav-history-btn"
+                onClick={() => setActiveTab("history")}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition-colors cursor-pointer ${
+                  activeTab === "history" ? "bg-emerald-600 text-white font-bold" : "text-slate-400 hover:bg-slate-800 hover:text-white"
+                }`}
+              >
+                <Calendar className="h-4 w-4" />
+                Riwayat Transaksi
+              </button>
+
+              <button
                 id="nav-users-btn"
                 onClick={() => setActiveTab("users")}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition-colors cursor-pointer ${
@@ -1692,17 +1718,6 @@ export default function App() {
               </button>
             </>
           )}
-
-          <button
-            id="nav-history-btn"
-            onClick={() => setActiveTab("history")}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition-colors cursor-pointer ${
-              activeTab === "history" ? "bg-emerald-600 text-white font-bold" : "text-slate-400 hover:bg-slate-800 hover:text-white"
-            }`}
-          >
-            <Calendar className="h-4 w-4" />
-            Riwayat Transaksi
-          </button>
 
           <button
             id="nav-customers-btn"
@@ -3030,6 +3045,148 @@ export default function App() {
                   </span>
                 </div>
 
+                {/* Filter Panel */}
+                <div className="bg-slate-50 border border-slate-200/60 p-4 rounded-xl space-y-3">
+                  <div className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                    <Filter className="h-4 w-4 text-emerald-600" />
+                    Filter & Cari Data Penjualan
+                  </div>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    {/* Search Input */}
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Cari Kata Kunci</label>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          placeholder="Masukkan kata kunci..."
+                          value={salesSearchTerm}
+                          onChange={(e) => setSalesSearchTerm(e.target.value)}
+                          className="w-full bg-white border border-slate-200 rounded-lg pl-8 pr-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800 font-medium"
+                        />
+                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                      </div>
+                    </div>
+
+                    {/* Column Selector */}
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Berdasarkan Kolom</label>
+                      <select
+                        value={salesSearchColumn}
+                        onChange={(e) => setSalesSearchColumn(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800 font-bold cursor-pointer"
+                      >
+                        <option value="all">Semua Kolom</option>
+                        <option value="customerName">Nama Pelanggan</option>
+                        <option value="scentName">Aroma Parfum</option>
+                        <option value="bottle">Botol / Kemasan</option>
+                        <option value="totalPrice">Total Bayar (Nominal)</option>
+                      </select>
+                    </div>
+
+                    {/* Case Sensitive Switch */}
+                    <div className="flex items-end pb-0.5">
+                      <button
+                        type="button"
+                        onClick={() => setSalesSearchCaseSensitive(!salesSearchCaseSensitive)}
+                        className={`w-full flex items-center justify-center gap-2 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wide transition-all border cursor-pointer select-none ${
+                          salesSearchCaseSensitive 
+                            ? "bg-rose-50 text-rose-700 border-rose-200 shadow-sm" 
+                            : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+                        }`}
+                      >
+                        <span className={`h-1.5 w-1.5 rounded-full ${salesSearchCaseSensitive ? "bg-rose-500 animate-pulse" : "bg-slate-300"}`} />
+                        Aa Sensitif Huruf
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-1">
+                    {/* Dari Tanggal */}
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Dari Tanggal</label>
+                      <input
+                        type="date"
+                        value={salesFilterStartDate}
+                        onChange={(e) => setSalesFilterStartDate(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800"
+                      />
+                    </div>
+
+                    {/* Sampai Tanggal */}
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Sampai Tanggal</label>
+                      <input
+                        type="date"
+                        value={salesFilterEndDate}
+                        onChange={(e) => setSalesFilterEndDate(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800"
+                      />
+                    </div>
+
+                    {/* Bulan */}
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Bulan</label>
+                      <select
+                        value={salesFilterMonth}
+                        onChange={(e) => setSalesFilterMonth(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800 cursor-pointer font-medium"
+                      >
+                        <option value="">Semua Bulan</option>
+                        <option value="01">Januari</option>
+                        <option value="02">Februari</option>
+                        <option value="03">Maret</option>
+                        <option value="04">April</option>
+                        <option value="05">Mei</option>
+                        <option value="06">Juni</option>
+                        <option value="07">Juli</option>
+                        <option value="08">Agustus</option>
+                        <option value="09">September</option>
+                        <option value="10">Oktober</option>
+                        <option value="11">November</option>
+                        <option value="12">Desember</option>
+                      </select>
+                    </div>
+
+                    {/* Tahun */}
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Tahun</label>
+                      <div className="flex gap-2">
+                        <select
+                          value={salesFilterYear}
+                          onChange={(e) => setSalesFilterYear(e.target.value)}
+                          className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800 cursor-pointer font-medium"
+                        >
+                          <option value="">Semua Tahun</option>
+                          <option value="2024">2024</option>
+                          <option value="2025">2025</option>
+                          <option value="2026">2026</option>
+                          <option value="2027">2027</option>
+                          <option value="2028">2028</option>
+                        </select>
+                        {(salesSearchTerm || salesFilterStartDate || salesFilterEndDate || salesFilterMonth || salesFilterYear) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSalesSearchTerm("");
+                              setSalesSearchColumn("all");
+                              setSalesSearchCaseSensitive(false);
+                              setSalesFilterStartDate("");
+                              setSalesFilterEndDate("");
+                              setSalesFilterMonth("");
+                              setSalesFilterYear("");
+                            }}
+                            className="bg-rose-50 hover:bg-rose-100 text-rose-700 p-1.5 rounded-lg border border-rose-200 text-[11px] font-bold transition-all cursor-pointer flex items-center justify-center shrink-0"
+                            title="Reset Filter"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs">
                     <thead>
@@ -3043,11 +3200,95 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {[...transactions]
-                        .filter(t => t.type === "sale")
-                        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-                        .slice(0, 5)
-                        .map((t) => (
+                      {(() => {
+                        const filteredSales = [...transactions]
+                          .filter(t => t.type === "sale")
+                          .filter(t => {
+                            // 1. Text search filter
+                            if (salesSearchTerm) {
+                              const term = salesSearchCaseSensitive ? salesSearchTerm : salesSearchTerm.toLowerCase();
+                              
+                              // Customer Name
+                              const cust = t.customerName ? (salesSearchCaseSensitive ? t.customerName : t.customerName.toLowerCase()) : "pelanggan umum";
+                              
+                              // Scent Name (flat & items)
+                              const scents: string[] = [];
+                              if (t.scentName) scents.push(t.scentName);
+                              if (t.items) t.items.forEach(it => { if (it.scentName) scents.push(it.scentName); });
+                              const scentMatch = scents.some(s => salesSearchCaseSensitive ? s.includes(term) : s.toLowerCase().includes(term));
+                              
+                              // Bottle Size (flat & items)
+                              const bottles: string[] = [];
+                              if (t.bottleSize && t.bottleSize !== "None") bottles.push(t.bottleSize);
+                              if (t.items) t.items.forEach(it => { if (it.bottleSize && it.bottleSize !== "None") bottles.push(it.bottleSize); });
+                              const bottleMatch = bottles.some(b => salesSearchCaseSensitive ? b.includes(term) : b.toLowerCase().includes(term));
+                              
+                              // Total Price
+                              const priceStr = t.totalPrice.toString();
+                              const priceMatch = priceStr.includes(term);
+
+                              // General search check
+                              if (salesSearchColumn === "all") {
+                                const matchesAny = cust.includes(term) || scentMatch || bottleMatch || priceMatch || t.id.includes(term);
+                                if (!matchesAny) return false;
+                              } else if (salesSearchColumn === "customerName") {
+                                if (!cust.includes(term)) return false;
+                              } else if (salesSearchColumn === "scentName") {
+                                if (!scentMatch) return false;
+                              } else if (salesSearchColumn === "bottle") {
+                                if (!bottleMatch) return false;
+                              } else if (salesSearchColumn === "totalPrice") {
+                                if (!priceMatch) return false;
+                              }
+                            }
+
+                            // 2. Date/Month/Year filters
+                            const txDate = new Date(t.date);
+                            const txDateStr = t.date.substring(0, 10); // "YYYY-MM-DD"
+                            
+                            if (salesFilterStartDate && txDateStr < salesFilterStartDate) {
+                              return false;
+                            }
+                            if (salesFilterEndDate && txDateStr > salesFilterEndDate) {
+                              return false;
+                            }
+
+                            // Month Filter (01 - 12)
+                            if (salesFilterMonth) {
+                              const txMonth = (txDate.getMonth() + 1).toString().padStart(2, "0"); // "01" - "12"
+                              if (txMonth !== salesFilterMonth) {
+                                return false;
+                              }
+                            }
+
+                            // Year Filter (YYYY)
+                            if (salesFilterYear) {
+                              const txYear = txDate.getFullYear().toString(); // "2026" etc
+                              if (txYear !== salesFilterYear) {
+                                return false;
+                              }
+                            }
+
+                            return true;
+                          })
+                          .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+                        const hasFilter = salesSearchTerm || salesFilterStartDate || salesFilterEndDate || salesFilterMonth || salesFilterYear;
+                        const displayList = hasFilter ? filteredSales : filteredSales.slice(0, 5);
+
+                        if (displayList.length === 0) {
+                          return (
+                            <tr>
+                              <td colSpan={6} className="py-8 text-center text-slate-400 italic">
+                                {hasFilter 
+                                  ? "Tidak ada transaksi penjualan yang cocok dengan kriteria pencarian." 
+                                  : "Belum ada transaksi penjualan yang tercatat."}
+                              </td>
+                            </tr>
+                          );
+                        }
+
+                        return displayList.map((t) => (
                           <tr key={t.id} className="hover:bg-slate-50/50 transition-colors">
                             <td className="py-2.5 px-4 font-semibold text-slate-500">
                               {new Date(t.date).toLocaleDateString("id-ID", { day: "numeric", month: "short" })} - {new Date(t.date).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}
@@ -3102,14 +3343,8 @@ export default function App() {
                               </button>
                             </td>
                           </tr>
-                        ))}
-                      {transactions.filter(t => t.type === "sale").length === 0 && (
-                        <tr>
-                          <td colSpan={6} className="py-8 text-center text-slate-400 italic">
-                            Belum ada transaksi penjualan yang tercatat. Silakan lakukan penjualan di atas.
-                          </td>
-                        </tr>
-                      )}
+                        ));
+                      })()}
                     </tbody>
                   </table>
                 </div>
@@ -4053,14 +4288,94 @@ export default function App() {
           {/* ==========================================
               8. RIWAYAT TRANSAKSI VIEW (All Whitelisted)
               ========================================== */}
-          {activeTab === "history" && (
+          {activeTab === "history" && userRole === "admin" && (
             <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
-              <div className="flex items-center justify-between mb-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
                 <div>
                   <h3 className="font-bold text-sm text-slate-900">Histori Kronologis Transaksi Toko</h3>
                   <p className="text-[11px] text-slate-500">Mencatat seluruh mutasi penjualan kasir dan pembelian stok yang dilakukan.</p>
                 </div>
                 <span className="text-xs bg-slate-100 px-2.5 py-1 rounded-full font-semibold text-slate-600">{transactions.length} baris data</span>
+              </div>
+
+              {/* Date, Month, Year Filter Bar */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-slate-50 border border-slate-200 p-4 rounded-xl mb-6 text-xs">
+                {/* Dari Tanggal */}
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Dari Tanggal</label>
+                  <input
+                    type="date"
+                    value={historyFilterStartDate}
+                    onChange={(e) => setHistoryFilterStartDate(e.target.value)}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800"
+                  />
+                </div>
+                {/* Sampai Tanggal */}
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Sampai Tanggal</label>
+                  <input
+                    type="date"
+                    value={historyFilterEndDate}
+                    onChange={(e) => setHistoryFilterEndDate(e.target.value)}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800"
+                  />
+                </div>
+                {/* Pilih Bulan */}
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Bulan</label>
+                  <select
+                    value={historyFilterMonth}
+                    onChange={(e) => setHistoryFilterMonth(e.target.value)}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800 font-medium cursor-pointer"
+                  >
+                    <option value="">Semua Bulan</option>
+                    <option value="01">Januari</option>
+                    <option value="02">Februari</option>
+                    <option value="03">Maret</option>
+                    <option value="04">April</option>
+                    <option value="05">Mei</option>
+                    <option value="06">Juni</option>
+                    <option value="07">Juli</option>
+                    <option value="08">Agustus</option>
+                    <option value="09">September</option>
+                    <option value="10">Oktober</option>
+                    <option value="11">November</option>
+                    <option value="12">Desember</option>
+                  </select>
+                </div>
+                {/* Pilih Tahun */}
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Tahun</label>
+                  <div className="flex gap-2">
+                    <select
+                      value={historyFilterYear}
+                      onChange={(e) => setHistoryFilterYear(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800 font-medium cursor-pointer"
+                    >
+                      <option value="">Semua Tahun</option>
+                      <option value="2024">2024</option>
+                      <option value="2025">2025</option>
+                      <option value="2026">2026</option>
+                      <option value="2027">2027</option>
+                      <option value="2028">2028</option>
+                    </select>
+                    {(historyFilterStartDate || historyFilterEndDate || historyFilterMonth || historyFilterYear) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setHistoryFilterStartDate("");
+                          setHistoryFilterEndDate("");
+                          setHistoryFilterMonth("");
+                          setHistoryFilterYear("");
+                        }}
+                        className="bg-rose-50 hover:bg-rose-100 text-rose-700 p-1.5 rounded-lg border border-rose-200 text-[11px] font-bold transition-all cursor-pointer flex items-center justify-center shrink-0"
+                        title="Reset Filter Tanggal"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
               </div>
 
               <div className="overflow-x-auto">
@@ -4078,28 +4393,59 @@ export default function App() {
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {transactions.filter(t => {
-                      if (!searchTerm) return true;
-                      const term = searchCaseSensitive ? searchTerm : searchTerm.toLowerCase();
-                      
-                      const txId = searchCaseSensitive ? t.id : t.id.toLowerCase();
-                      const scent = t.scentName ? (searchCaseSensitive ? t.scentName : t.scentName.toLowerCase()) : "";
-                      const desc = t.description ? (searchCaseSensitive ? t.description : t.description.toLowerCase()) : "";
-                      const op = searchCaseSensitive ? t.operatorEmail : t.operatorEmail.toLowerCase();
-                      const cust = t.customerName ? (searchCaseSensitive ? t.customerName : t.customerName.toLowerCase()) : "pelanggan umum";
+                      // 1. Text Search Filter
+                      if (searchTerm) {
+                        const term = searchCaseSensitive ? searchTerm : searchTerm.toLowerCase();
+                        const txId = searchCaseSensitive ? t.id : t.id.toLowerCase();
+                        const scent = t.scentName ? (searchCaseSensitive ? t.scentName : t.scentName.toLowerCase()) : "";
+                        const desc = t.description ? (searchCaseSensitive ? t.description : t.description.toLowerCase()) : "";
+                        const op = searchCaseSensitive ? t.operatorEmail : t.operatorEmail.toLowerCase();
+                        const cust = t.customerName ? (searchCaseSensitive ? t.customerName : t.customerName.toLowerCase()) : "pelanggan umum";
 
-                      if (searchColumn === "all") {
-                        return txId.includes(term) || scent.includes(term) || desc.includes(term) || op.includes(term) || cust.includes(term);
-                      } else if (searchColumn === "id") {
-                        return txId.includes(term);
-                      } else if (searchColumn === "scentName") {
-                        return scent.includes(term);
-                      } else if (searchColumn === "description") {
-                        return desc.includes(term);
-                      } else if (searchColumn === "operatorEmail") {
-                        return op.includes(term);
-                      } else if (searchColumn === "customerName") {
-                        return cust.includes(term);
+                        let matchesText = false;
+                        if (searchColumn === "all") {
+                          matchesText = txId.includes(term) || scent.includes(term) || desc.includes(term) || op.includes(term) || cust.includes(term);
+                        } else if (searchColumn === "id") {
+                          matchesText = txId.includes(term);
+                        } else if (searchColumn === "scentName") {
+                          matchesText = scent.includes(term);
+                        } else if (searchColumn === "description") {
+                          matchesText = desc.includes(term);
+                        } else if (searchColumn === "operatorEmail") {
+                          matchesText = op.includes(term);
+                        } else if (searchColumn === "customerName") {
+                          matchesText = cust.includes(term);
+                        }
+                        if (!matchesText) return false;
                       }
+
+                      // 2. Date filters
+                      const txDate = new Date(t.date);
+                      const txDateStr = t.date.substring(0, 10); // "YYYY-MM-DD"
+                      
+                      if (historyFilterStartDate && txDateStr < historyFilterStartDate) {
+                        return false;
+                      }
+                      if (historyFilterEndDate && txDateStr > historyFilterEndDate) {
+                        return false;
+                      }
+
+                      // Month Filter (01 - 12)
+                      if (historyFilterMonth) {
+                        const txMonth = (txDate.getMonth() + 1).toString().padStart(2, "0"); // "01" - "12"
+                        if (txMonth !== historyFilterMonth) {
+                          return false;
+                        }
+                      }
+
+                      // Year Filter (YYYY)
+                      if (historyFilterYear) {
+                        const txYear = txDate.getFullYear().toString(); // "2026" etc
+                        if (txYear !== historyFilterYear) {
+                          return false;
+                        }
+                      }
+
                       return true;
                     }).map((t) => (
                       <tr key={t.id} className="hover:bg-slate-50/50 transition-colors">

@@ -42,6 +42,7 @@ export interface Transaction {
   id: string;
   type: "purchase" | "sale" | "transfer";
   date: string; // ISO String or local Date string
+  timestamp?: string; // Optional timestamp
   category: "bibit" | "alkohol" | "botol" | "other";
   scentName?: string; // If bibit/essence is selected
   volumeMl?: number; // Volume of bibit

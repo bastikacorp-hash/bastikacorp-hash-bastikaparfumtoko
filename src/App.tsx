@@ -2148,7 +2148,7 @@ export default function App() {
                   resellerTxs.map(t => (
                     <tr key={t.id} className="border-b border-slate-800/60 hover:bg-slate-900/20">
                       <td className="py-3 px-4 text-slate-300">
-                        {new Date(t.timestamp).toLocaleString("id-ID")}
+                        {new Date(t.date || t.timestamp || "").toLocaleString("id-ID")}
                       </td>
                       <td className="py-3 px-4 font-bold text-white">{t.packageName || "Paket"}</td>
                       <td className="py-3 px-4 text-slate-300">{t.scentName}</td>
@@ -2608,7 +2608,7 @@ export default function App() {
                       consignmentSales.map(t => (
                         <tr key={t.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
                           <td className="py-3 px-4 text-slate-600">
-                            {new Date(t.timestamp).toLocaleString("id-ID")}
+                            {new Date(t.date || t.timestamp || "").toLocaleString("id-ID")}
                           </td>
                           <td className="py-3 px-4">
                             <span className="font-bold text-slate-900">{t.resellerEmail}</span>

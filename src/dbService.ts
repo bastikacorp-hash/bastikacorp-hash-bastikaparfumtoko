@@ -1717,6 +1717,7 @@ export async function addResellerSaleTransaction(
       id: txId,
       type: "sale",
       date: dateStr,
+      timestamp: dateStr,
       category: "other", // represents bundling package sale
       scentName,
       bottleSize,

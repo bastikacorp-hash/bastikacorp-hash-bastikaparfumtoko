@@ -2377,7 +2377,7 @@ export default function App() {
                     required
                   >
                     {bottleSizes.map(bs => (
-                      <option key={bs.id} value={bs.name}>{bs.name}</option>
+                      <option key={bs.id} value={bs.size}>{bs.size}</option>
                     ))}
                   </select>
                 </div>

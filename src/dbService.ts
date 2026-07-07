@@ -28,6 +28,7 @@ import {
   InvoiceSettings,
   Customer,
   ResellerStock,
+  ResellerPackageStock,
   BundlingPackage
 } from "./types";
 
@@ -1453,6 +1454,118 @@ export function subscribeToResellerStocks(callback: (stocks: ResellerStock[]) =>
   });
 }
 
+export function subscribeToResellerPackageStocks(callback: (stocks: ResellerPackageStock[]) => void) {
+  return onSnapshot(collection(db, "reseller_package_stocks"), (snapshot) => {
+    const list: ResellerPackageStock[] = [];
+    snapshot.forEach((docSnap) => {
+      list.push(docSnap.data() as ResellerPackageStock);
+    });
+    callback(list);
+  });
+}
+
+export async function sendBundlingPackageToReseller(
+  resellerEmail: string,
+  packageId: string,
+  quantity: number,
+  operatorEmail: string
+) {
+  const safeEmail = resellerEmail.trim().toLowerCase().replace(/[^a-z0-9@.]+/g, "_");
+  const resellerPkgStockId = `${safeEmail}_${packageId}`;
+
+  await runTransaction(db, async (transaction) => {
+    // 1. Get bundling package details
+    const pkgRef = doc(db, "bundling_packages", packageId);
+    const pkgSnap = await transaction.get(pkgRef);
+    if (!pkgSnap.exists()) {
+      throw new Error("Formula paket bundling tidak ditemukan!");
+    }
+    const pkg = pkgSnap.data() as BundlingPackage;
+    if (!pkg.scentName) {
+      throw new Error("Paket bundling tidak memiliki aroma bibit parfum yang terkonfigurasi!");
+    }
+
+    // 2. Define master component stock IDs
+    const essenceStockId = `essence_${pkg.scentName.replace(/\s+/g, "_").toLowerCase()}`;
+    const bottleStockId = `bottle_${pkg.bottleSize}`;
+    const alcoholStockId = "alcohol_main";
+
+    const essenceRef = doc(db, "stocks", essenceStockId);
+    const bottleRef = doc(db, "stocks", bottleStockId);
+    const alcoholRef = doc(db, "stocks", alcoholStockId);
+
+    // 3. Fetch master stock documents
+    const essenceSnap = await transaction.get(essenceRef);
+    const bottleSnap = await transaction.get(bottleRef);
+    const alcoholSnap = await transaction.get(alcoholRef);
+
+    // 4. Calculate total requirements
+    const totalEssenceRequired = pkg.essenceMl * quantity;
+    const totalBottleRequired = quantity;
+    const totalAlcoholRequired = pkg.alcoholMl * quantity;
+
+    // 5. Verify availability in master stocks
+    if (!essenceSnap.exists() || (essenceSnap.data().quantity || 0) < totalEssenceRequired) {
+      const currentEssence = essenceSnap.exists() ? essenceSnap.data().quantity : 0;
+      throw new Error(`Stok utama bibit aroma ${pkg.scentName} tidak mencukupi! Tersedia: ${currentEssence} ml, Butuh: ${totalEssenceRequired} ml`);
+    }
+
+    if (!bottleSnap.exists() || (bottleSnap.data().quantity || 0) < totalBottleRequired) {
+      const currentBottle = bottleSnap.exists() ? bottleSnap.data().quantity : 0;
+      throw new Error(`Stok utama botol ukuran ${pkg.bottleSize} tidak mencukupi! Tersedia: ${currentBottle} pcs, Butuh: ${totalBottleRequired} pcs`);
+    }
+
+    if (!alcoholSnap.exists() || (alcoholSnap.data().quantity || 0) < totalAlcoholRequired) {
+      const currentAlcohol = alcoholSnap.exists() ? alcoholSnap.data().quantity : 0;
+      throw new Error(`Stok utama cairan pelarut (Absolut) tidak mencukupi! Tersedia: ${currentAlcohol} ml, Butuh: ${totalAlcoholRequired} ml`);
+    }
+
+    // 6. Perform master stock deductions
+    transaction.update(essenceRef, { quantity: essenceSnap.data().quantity - totalEssenceRequired });
+    transaction.update(bottleRef, { quantity: bottleSnap.data().quantity - totalBottleRequired });
+    transaction.update(alcoholRef, { quantity: alcoholSnap.data().quantity - totalAlcoholRequired });
+
+    // 7. Increment Reseller Package Stock
+    const resellerPkgStockRef = doc(db, "reseller_package_stocks", resellerPkgStockId);
+    const resellerPkgStockSnap = await transaction.get(resellerPkgStockRef);
+
+    if (resellerPkgStockSnap.exists()) {
+      const currentQty = resellerPkgStockSnap.data().quantity || 0;
+      transaction.update(resellerPkgStockRef, { quantity: currentQty + quantity });
+    } else {
+      transaction.set(resellerPkgStockRef, {
+        id: resellerPkgStockId,
+        resellerEmail: resellerEmail.trim().toLowerCase(),
+        packageId,
+        packageName: pkg.packageName,
+        scentName: pkg.scentName,
+        bottleSize: pkg.bottleSize,
+        quantity: quantity
+      });
+    }
+
+    // 8. Log the transfer transaction
+    const txId = "tx_transfer_" + generateId();
+    const txRef = doc(db, "transactions", txId);
+    transaction.set(txRef, {
+      id: txId,
+      type: "transfer",
+      date: new Date().toISOString(),
+      category: "bundling",
+      scentName: pkg.scentName,
+      bottleSize: pkg.bottleSize,
+      bottleCount: quantity,
+      volumeMl: totalEssenceRequired,
+      totalPrice: 0,
+      description: `Kirim Paket Bundling ${pkg.packageName} (${pkg.scentName}) sebanyak ${quantity} unit ke ${resellerEmail}`,
+      operatorEmail,
+      resellerEmail: resellerEmail.trim().toLowerCase(),
+      isConsignment: true,
+      packageName: pkg.packageName
+    });
+  });
+}
+
 export function subscribeToBundlingPackages(callback: (packages: BundlingPackage[]) => void) {
   return onSnapshot(query(collection(db, "bundling_packages"), orderBy("addedAt", "desc")), (snapshot) => {
     const list: BundlingPackage[] = [];
@@ -1579,46 +1692,21 @@ export async function addResellerSaleTransaction(
 
   await runTransaction(db, async (transaction) => {
     const safeEmail = resellerEmail.trim().toLowerCase().replace(/[^a-z0-9@.]+/g, "_");
+    const resellerPkgStockId = `${safeEmail}_${packageId}`;
+    const resellerPkgStockRef = doc(db, "reseller_package_stocks", resellerPkgStockId);
+    const resellerPkgStockSnap = await transaction.get(resellerPkgStockRef);
 
-    // 1. Get Reseller Stock Refs & Read
-    // A. Essence
-    const essenceId = `${safeEmail}_essence_${scentName.replace(/\s+/g, "_").toLowerCase()}`;
-    const essenceRef = doc(db, "reseller_stocks", essenceId);
-    const essenceSnap = await transaction.get(essenceRef);
+    if (!resellerPkgStockSnap.exists() || (resellerPkgStockSnap.data().quantity || 0) < quantity) {
+      const currentQty = resellerPkgStockSnap.exists() ? resellerPkgStockSnap.data().quantity : 0;
+      throw new Error(`Stok fisik paket bundling ${packageName} (${scentName}) di Reseller tidak mencukupi! Tersedia: ${currentQty} unit, Butuh: ${quantity} unit`);
+    }
 
-    // B. Bottle
-    const bottleId = `${safeEmail}_bottle_${bottleSize}`;
-    const bottleRef = doc(db, "reseller_stocks", bottleId);
-    const bottleSnap = await transaction.get(bottleRef);
-
-    // C. Alcohol
-    const alcoholId = `${safeEmail}_alcohol_main`;
-    const alcoholRef = doc(db, "reseller_stocks", alcoholId);
-    const alcoholSnap = await transaction.get(alcoholRef);
-
-    // 2. Validate quantities
     const totalEssenceNeeded = essenceMl * quantity;
-    const totalBottleNeeded = quantity;
-    const totalAlcoholNeeded = alcoholMl * quantity;
 
-    if (!essenceSnap.exists() || (essenceSnap.data().quantity || 0) < totalEssenceNeeded) {
-      throw new Error(`Stok bibit aroma ${scentName} di Reseller tidak mencukupi! Tersedia: ${essenceSnap.exists() ? essenceSnap.data().quantity : 0} ml, Butuh: ${totalEssenceNeeded} ml`);
-    }
+    // Deduct stock of physical bundling package from reseller
+    transaction.update(resellerPkgStockRef, { quantity: resellerPkgStockSnap.data().quantity - quantity });
 
-    if (!bottleSnap.exists() || (bottleSnap.data().quantity || 0) < totalBottleNeeded) {
-      throw new Error(`Stok botol ${bottleSize} di Reseller tidak mencukupi! Tersedia: ${bottleSnap.exists() ? bottleSnap.data().quantity : 0} unit, Butuh: ${totalBottleNeeded} unit`);
-    }
-
-    if (!alcoholSnap.exists() || (alcoholSnap.data().quantity || 0) < totalAlcoholNeeded) {
-      throw new Error(`Stok absolut di Reseller tidak mencukupi! Tersedia: ${alcoholSnap.exists() ? alcoholSnap.data().quantity : 0} ml, Butuh: ${totalAlcoholNeeded} ml`);
-    }
-
-    // 3. Perform Deductions
-    transaction.update(essenceRef, { quantity: essenceSnap.data().quantity - totalEssenceNeeded });
-    transaction.update(bottleRef, { quantity: bottleSnap.data().quantity - totalBottleNeeded });
-    transaction.update(alcoholRef, { quantity: alcoholSnap.data().quantity - totalAlcoholNeeded });
-
-    // 4. Save transaction in DB
+    // Save transaction in DB
     const txRef = doc(db, "transactions", txId);
     transaction.set(txRef, {
       id: txId,
@@ -1630,7 +1718,7 @@ export async function addResellerSaleTransaction(
       bottleCount: quantity,
       volumeMl: totalEssenceNeeded,
       totalPrice,
-      description: `Penjualan Bundling Reseller: ${packageName} (Aroma ${scentName}) x ${quantity} pcs`,
+      description: `Penjualan Bundling Reseller: ${packageName} (${scentName}) x ${quantity} pcs`,
       operatorEmail,
       resellerEmail: resellerEmail.trim().toLowerCase(),
       paymentStatus: "Belum Dibayar",

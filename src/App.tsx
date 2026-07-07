@@ -51,10 +51,12 @@ import {
   importDatabaseData,
   clearEntireDatabase,
   subscribeToResellerStocks,
+  subscribeToResellerPackageStocks,
   subscribeToBundlingPackages,
   addBundlingPackage,
   deleteBundlingPackage,
   transferStockToReseller,
+  sendBundlingPackageToReseller,
   addResellerSaleTransaction,
   settleResellerTransaction
 } from "./dbService";
@@ -72,6 +74,7 @@ import {
   Customer,
   SaleItem,
   ResellerStock,
+  ResellerPackageStock,
   BundlingPackage
 } from "./types";
 import { 
@@ -142,13 +145,15 @@ export default function App() {
   
   // Consignment & Bundling States
   const [resellerStocks, setResellerStocks] = useState<ResellerStock[]>([]);
+  const [resellerPackageStocks, setResellerPackageStocks] = useState<ResellerPackageStock[]>([]);
   const [bundlingPackages, setBundlingPackages] = useState<BundlingPackage[]>([]);
   const [showAddBundling, setShowAddBundling] = useState(false);
   const [newBundling, setNewBundling] = useState({
     packageName: "",
+    scentName: "",
     bottleSize: "30ml",
-    essenceMl: 5,
-    alcoholMl: 25,
+    essenceMl: 10,
+    alcoholMl: 20,
     price: 35000
   });
   const [showTransferStock, setShowTransferStock] = useState(false);
@@ -158,6 +163,11 @@ export default function App() {
     scentName: "",
     size: "30ml",
     quantity: 0
+  });
+  const [sendPackageForm, setSendPackageForm] = useState({
+    resellerEmail: "",
+    packageId: "",
+    quantity: 1
   });
   const [resellerSaleForm, setResellerSaleForm] = useState({
     packageId: "",
@@ -462,6 +472,7 @@ export default function App() {
       setAdminDiscountInput(config.discountAmount.toString());
     });
     const unsubResellerStocks = subscribeToResellerStocks(setResellerStocks);
+    const unsubResellerPackageStocks = subscribeToResellerPackageStocks(setResellerPackageStocks);
     const unsubBundlingPackages = subscribeToBundlingPackages(setBundlingPackages);
 
     let unsubSalaries = () => {};
@@ -485,6 +496,7 @@ export default function App() {
       unsubCustomers();
       unsubPromo();
       unsubResellerStocks();
+      unsubResellerPackageStocks();
       unsubBundlingPackages();
     };
   }, [userRole]);
@@ -1192,14 +1204,14 @@ export default function App() {
         const successMsg = newClientRole === "client" 
           ? `User @${finalUsername} berhasil didaftarkan sebagai CLIENT!`
           : newClientRole === "reseller"
-          ? `User ${finalEmail} berhasil didaftarkan sebagai RESELLER!`
+          ? `User @${finalUsername || finalEmail} berhasil didaftarkan sebagai RESELLER!`
           : `Admin ${finalEmail} berhasil didaftarkan sebagai ADMIN!`;
         showToast(successMsg, "success");
       } else {
         const updateMsg = newClientRole === "client"
           ? `Hak akses @${finalUsername} diperbarui sebagai CLIENT!`
           : newClientRole === "reseller"
-          ? `Hak akses ${finalEmail} diperbarui sebagai RESELLER!`
+          ? `Hak akses @${finalUsername || finalEmail} diperbarui sebagai RESELLER!`
           : `Hak akses ${finalEmail} diperbarui sebagai ADMIN!`;
         showToast(updateMsg, "success");
       }
@@ -1706,32 +1718,77 @@ export default function App() {
     }
   };
 
-  const handleAddBundlingSubmit = async (e: React.FormEvent) => {
+  const handleSendPackageSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const { packageName, bottleSize, essenceMl, alcoholMl, price } = newBundling;
-    if (!packageName.trim()) {
-      showToast("Nama paket wajib diisi!", "error");
+    const { resellerEmail, packageId, quantity } = sendPackageForm;
+    if (!resellerEmail) {
+      showToast("Pilih reseller tujuan terlebih dahulu!", "error");
       return;
     }
-    if (essenceMl <= 0 || alcoholMl <= 0 || price <= 0) {
-      showToast("Nilai volume bibit, absolut, dan harga harus lebih besar dari 0!", "error");
+    if (!packageId) {
+      showToast("Pilih paket bundling terlebih dahulu!", "error");
+      return;
+    }
+    if (quantity <= 0) {
+      showToast("Jumlah pengiriman harus minimal 1!", "error");
       return;
     }
 
     try {
+      const operator = currentUser?.email || customEmail || "admin";
+      await sendBundlingPackageToReseller(resellerEmail, packageId, quantity, operator);
+      showToast(`Berhasil mengirimkan ${quantity} unit paket bundling ke reseller!`, "success");
+      setSendPackageForm(prev => ({ ...prev, quantity: 1, packageId: "" }));
+    } catch (err: any) {
+      showToast(err.message || "Gagal mengirimkan paket bundling", "error");
+    }
+  };
+
+  const handleAddBundlingSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const { scentName, bottleSize, essenceMl, price } = newBundling;
+    if (!scentName.trim()) {
+      showToast("Nama aroma wajib diisi!", "error");
+      return;
+    }
+    if (!bottleSize) {
+      showToast("Ukuran botol wajib dipilih!", "error");
+      return;
+    }
+    if (essenceMl <= 0 || price <= 0) {
+      showToast("Nilai volume bibit dan harga harus lebih besar dari 0!", "error");
+      return;
+    }
+
+    const parseSizeNumber = (sizeStr: string): number => {
+      return parseInt(sizeStr.replace(/[^0-9]/g, "")) || 0;
+    };
+
+    const capacity = parseSizeNumber(bottleSize);
+    if (essenceMl >= capacity) {
+      showToast(`Volume bibit (${essenceMl} ml) tidak boleh melebihi atau sama dengan kapasitas botol (${capacity} ml)!`, "error");
+      return;
+    }
+
+    const calculatedAlcoholMl = capacity - essenceMl;
+    const autoPackageName = `Aroma ${scentName.trim()} - ${bottleSize}`;
+
+    try {
       await addBundlingPackage({
-        packageName: packageName.trim(),
+        packageName: autoPackageName,
+        scentName: scentName.trim(),
         bottleSize,
         essenceMl,
-        alcoholMl,
+        alcoholMl: calculatedAlcoholMl,
         price
       });
-      showToast(`Paket bundling ${packageName} berhasil ditambahkan!`, "success");
+      showToast(`Formula paket bundling "${autoPackageName}" berhasil ditambahkan!`, "success");
       setNewBundling({
         packageName: "",
+        scentName: "",
         bottleSize: "30ml",
-        essenceMl: 5,
-        alcoholMl: 25,
+        essenceMl: 10,
+        alcoholMl: 20,
         price: 35000
       });
       setShowAddBundling(false);
@@ -1768,117 +1825,59 @@ export default function App() {
   // ==========================================
   const renderResellerKatalog = () => {
     const emailKey = (currentUser?.email || customEmail || "").trim().toLowerCase();
-    const myStocks = resellerStocks.filter(s => s.resellerEmail === emailKey);
+    const myPackageStocks = resellerPackageStocks.filter(s => s.resellerEmail === emailKey && s.quantity > 0);
     
     return (
       <div className="space-y-6 animate-in fade-in duration-300">
-        <div className="bg-slate-950/40 border border-slate-800 rounded-2xl p-6">
-          <h3 className="text-sm font-bold text-slate-300 mb-4 flex items-center gap-2">
-            <Box className="h-4.5 w-4.5 text-emerald-400" />
-            Gudang Virtual Anda (Stok Barang Titipan Admin)
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800">
-              <span className="text-[10px] uppercase font-bold text-slate-500">Stok Botol Kosong</span>
-              <div className="mt-2 space-y-1">
-                {myStocks.filter(s => s.type === "bottle").length === 0 ? (
-                  <p className="text-xs text-slate-500 italic">Tidak ada stok botol</p>
-                ) : (
-                  myStocks.filter(s => s.type === "bottle").map(s => (
-                    <div key={s.id} className="flex justify-between text-xs text-slate-300">
-                      <span>Botol {s.size}</span>
-                      <span className="font-bold text-white">{s.quantity} pcs</span>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-
-            <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800">
-              <span className="text-[10px] uppercase font-bold text-slate-500">Stok Bibit Aroma (ml)</span>
-              <div className="mt-2 space-y-1 max-h-32 overflow-y-auto">
-                {myStocks.filter(s => s.type === "essence").length === 0 ? (
-                  <p className="text-xs text-slate-500 italic">Tidak ada stok bibit</p>
-                ) : (
-                  myStocks.filter(s => s.type === "essence").map(s => (
-                    <div key={s.id} className="flex justify-between text-xs text-slate-300">
-                      <span>{s.scentName}</span>
-                      <span className="font-bold text-white">{s.quantity} ml</span>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-
-            <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800">
-              <span className="text-[10px] uppercase font-bold text-slate-500">Stok Cairan Pelarut (Absolut)</span>
-              <div className="mt-2 space-y-1">
-                {myStocks.filter(s => s.type === "alcohol").length === 0 ? (
-                  <p className="text-xs text-slate-300">Absolut: <span className="font-bold text-white">0 ml</span></p>
-                ) : (
-                  myStocks.filter(s => s.type === "alcohol").map(s => (
-                    <div key={s.id} className="flex justify-between text-xs text-slate-300">
-                      <span>Absolut / Campuran</span>
-                      <span className="font-bold text-white">{s.quantity} ml</span>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-
         <div>
           <h3 className="text-sm font-bold text-slate-300 mb-4 flex items-center gap-2">
             <ShoppingBag className="h-4.5 w-4.5 text-emerald-400" />
-            Daftar Paket Bundling Tersedia
+            Daftar Paket Bundling Tersedia Anda
           </h3>
-          {bundlingPackages.length === 0 ? (
+          {myPackageStocks.length === 0 ? (
             <div className="bg-slate-950/40 border border-slate-800 rounded-2xl p-8 text-center text-slate-500 italic">
-              Belum ada paket bundling yang dikonfigurasi oleh Admin.
+              Belum ada paket bundling titipan yang dikirimkan oleh Admin ke Anda.
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {bundlingPackages.map(pkg => (
-                <div key={pkg.id} className="bg-slate-950/40 border border-slate-800 rounded-2xl p-5 hover:border-slate-700 transition-all flex flex-col justify-between">
-                  <div>
-                    <h4 className="text-base font-bold text-white">{pkg.packageName}</h4>
-                    <p className="text-xs text-slate-400 mt-1">Ukuran Botol: {pkg.bottleSize}</p>
-                    
-                    <div className="mt-4 pt-4 border-t border-slate-800/80 space-y-2">
-                      <span className="text-[10px] uppercase font-bold text-slate-500 block">Resep Komponen / Unit:</span>
-                      <div className="flex justify-between text-xs text-slate-300">
-                        <span>Botol {pkg.bottleSize}</span>
-                        <span>1 pcs</span>
-                      </div>
-                      <div className="flex justify-between text-xs text-slate-300">
-                        <span>Bibit Parfum (Aroma bebas)</span>
-                        <span>{pkg.essenceMl} ml</span>
-                      </div>
-                      <div className="flex justify-between text-xs text-slate-300">
-                        <span>Absolut / Campuran</span>
-                        <span>{pkg.alcoholMl} ml</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mt-6 pt-4 border-t border-slate-800/80 flex justify-between items-center">
+              {myPackageStocks.map(pkgStock => {
+                const pkgFormula = bundlingPackages.find(p => p.id === pkgStock.packageId);
+                const price = pkgFormula ? pkgFormula.price : 0;
+                return (
+                  <div key={pkgStock.id} className="bg-slate-950/40 border border-slate-800 rounded-2xl p-5 hover:border-slate-700 transition-all flex flex-col justify-between">
                     <div>
-                      <span className="text-[10px] uppercase font-bold text-slate-500">Harga Jual</span>
-                      <p className="text-lg font-bold text-emerald-400">Rp {pkg.price.toLocaleString("id-ID")}</p>
+                      <h4 className="text-base font-bold text-white">{pkgStock.packageName}</h4>
+                      <p className="text-xs text-slate-400 mt-1">Aroma: {pkgStock.scentName}</p>
+                      <p className="text-xs text-slate-400">Ukuran Botol: {pkgStock.bottleSize}</p>
+                      
+                      <div className="mt-4 pt-4 border-t border-slate-800/80 space-y-1">
+                        <span className="text-[10px] uppercase font-bold text-slate-500 block">Stok Tersedia:</span>
+                        <p className="text-lg font-bold text-white">{pkgStock.quantity} pcs</p>
+                      </div>
                     </div>
-                    <button
-                      onClick={() => {
-                        setResellerSaleForm(prev => ({ ...prev, packageId: pkg.id }));
-                        setResellerActiveTab("penjualan");
-                      }}
-                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-2 px-4 rounded-xl transition-all cursor-pointer"
-                    >
-                      Jual Paket
-                    </button>
+
+                    <div className="mt-6 pt-4 border-t border-slate-800/80 flex justify-between items-center">
+                      <div>
+                        <span className="text-[10px] uppercase font-bold text-slate-500">Harga Jual</span>
+                        <p className="text-lg font-bold text-emerald-400">Rp {price.toLocaleString("id-ID")}</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setResellerSaleForm({
+                            packageId: pkgStock.packageId,
+                            scentName: pkgStock.scentName,
+                            quantity: 1
+                          });
+                          setResellerActiveTab("penjualan");
+                        }}
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-2 px-4 rounded-xl transition-all cursor-pointer"
+                      >
+                        Jual Paket
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -1888,9 +1887,8 @@ export default function App() {
 
   const renderResellerPenjualanForm = () => {
     const emailKey = (currentUser?.email || customEmail || "").trim().toLowerCase();
-    const myEssences = resellerStocks.filter(s => 
+    const myPackageStocks = resellerPackageStocks.filter(s => 
       s.resellerEmail === emailKey && 
-      s.type === "essence" && 
       s.quantity > 0
     );
 
@@ -1906,39 +1904,28 @@ export default function App() {
             <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Pilih Paket Bundling</label>
             <select
               value={resellerSaleForm.packageId}
-              onChange={(e) => setResellerSaleForm(prev => ({ ...prev, packageId: e.target.value }))}
-              className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 text-white cursor-pointer"
+              onChange={(e) => {
+                const selectedStock = myPackageStocks.find(s => s.packageId === e.target.value);
+                setResellerSaleForm({
+                  packageId: e.target.value,
+                  scentName: selectedStock ? selectedStock.scentName : "",
+                  quantity: 1
+                });
+              }}
+              className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 text-white cursor-pointer font-semibold"
               required
             >
               <option value="">-- Pilih Paket --</option>
-              {bundlingPackages.map(pkg => (
-                <option key={pkg.id} value={pkg.id}>
-                  {pkg.packageName} - Rp {pkg.price.toLocaleString("id-ID")}
-                </option>
-              ))}
+              {myPackageStocks.map(s => {
+                const pkgFormula = bundlingPackages.find(p => p.id === s.packageId);
+                const priceStr = pkgFormula ? ` - Rp ${pkgFormula.price.toLocaleString("id-ID")}` : "";
+                return (
+                  <option key={s.id} value={s.packageId}>
+                    {s.packageName} (Stok: {s.quantity} pcs){priceStr}
+                  </option>
+                );
+              })}
             </select>
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Pilih Aroma Bibit Parfum</label>
-            <select
-              value={resellerSaleForm.scentName}
-              onChange={(e) => setResellerSaleForm(prev => ({ ...prev, scentName: e.target.value }))}
-              className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 text-white cursor-pointer"
-              required
-            >
-              <option value="">-- Pilih Aroma --</option>
-              {myEssences.map(e => (
-                <option key={e.id} value={e.scentName}>
-                  {e.scentName} (Sisa: {e.quantity} ml)
-                </option>
-              ))}
-            </select>
-            {myEssences.length === 0 && (
-              <p className="text-xs text-rose-400 mt-1.5 italic">
-                Peringatan: Anda tidak memiliki stok bibit aroma titipan yang tersedia. Silakan hubungi Admin untuk transfer stok bibit.
-              </p>
-            )}
           </div>
 
           <div>
@@ -1948,51 +1935,41 @@ export default function App() {
               min="1"
               value={resellerSaleForm.quantity}
               onChange={(e) => setResellerSaleForm(prev => ({ ...prev, quantity: parseInt(e.target.value) || 1 }))}
-              className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 text-white"
+              className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 text-white font-semibold"
               required
             />
           </div>
 
-          {resellerSaleForm.packageId && resellerSaleForm.scentName && (() => {
-            const pkg = bundlingPackages.find(p => p.id === resellerSaleForm.packageId);
-            if (!pkg) return null;
-            const totalRequiredBottle = resellerSaleForm.quantity;
-            const totalRequiredEssence = pkg.essenceMl * resellerSaleForm.quantity;
-            const totalRequiredAlcohol = pkg.alcoholMl * resellerSaleForm.quantity;
-
-            const availBottle = getResellerStockQty(emailKey, "bottle", pkg.bottleSize);
-            const availEssence = getResellerStockQty(emailKey, "essence", resellerSaleForm.scentName);
-            const availAlcohol = getResellerStockQty(emailKey, "alcohol");
-
-            const isBottleOk = availBottle >= totalRequiredBottle;
-            const isEssenceOk = availEssence >= totalRequiredEssence;
-            const isAlcoholOk = availAlcohol >= totalRequiredAlcohol;
-            const canSubmit = isBottleOk && isEssenceOk && isAlcoholOk;
+          {resellerSaleForm.packageId && (() => {
+            const selectedStock = myPackageStocks.find(s => s.packageId === resellerSaleForm.packageId);
+            if (!selectedStock) return null;
+            
+            const isStockOk = selectedStock.quantity >= resellerSaleForm.quantity;
 
             return (
               <div className="bg-slate-900/80 rounded-xl p-4 border border-slate-800 space-y-3">
-                <span className="text-[10px] uppercase font-bold text-slate-500">Estimasi Pengurangan Stok Anda:</span>
-                <div className="space-y-1.5 text-xs">
+                <span className="text-[10px] uppercase font-bold text-slate-500">Info Transaksi & Stok:</span>
+                <div className="space-y-1.5 text-xs text-slate-300">
                   <div className="flex justify-between">
-                    <span>Botol {pkg.bottleSize}:</span>
-                    <span className={isBottleOk ? "text-emerald-400" : "text-rose-400 font-bold"}>
-                      {totalRequiredBottle} pcs (Tersedia: {availBottle} pcs)
-                    </span>
+                    <span>Aroma Parfum:</span>
+                    <span className="font-bold text-white">{selectedStock.scentName}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Bibit {resellerSaleForm.scentName}:</span>
-                    <span className={isEssenceOk ? "text-emerald-400" : "text-rose-400 font-bold"}>
-                      {totalRequiredEssence} ml (Tersedia: {availEssence} ml)
-                    </span>
+                    <span>Ukuran Botol:</span>
+                    <span className="font-bold text-white">{selectedStock.bottleSize}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span>Absolut / Campuran:</span>
-                    <span className={isAlcoholOk ? "text-emerald-400" : "text-rose-400 font-bold"}>
-                      {totalRequiredAlcohol} ml (Tersedia: {availAlcohol} ml)
+                  <div className="flex justify-between pb-1.5 border-b border-slate-800">
+                    <span>Stok Titipan Tersedia:</span>
+                    <span className="font-bold text-white">{selectedStock.quantity} pcs</span>
+                  </div>
+                  <div className="flex justify-between pt-1 font-bold text-sm text-white">
+                    <span>Sisa Setelah Penjualan:</span>
+                    <span className={isStockOk ? "text-emerald-400" : "text-rose-400"}>
+                      {selectedStock.quantity - resellerSaleForm.quantity} pcs
                     </span>
                   </div>
                 </div>
-                {!canSubmit && (
+                {!isStockOk && (
                   <p className="text-[11px] text-rose-400 font-semibold italic">
                     Stok tidak mencukupi untuk melakukan transaksi ini!
                   </p>
@@ -2153,14 +2130,14 @@ export default function App() {
             <div className="lg:col-span-2 bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
               <h3 className="font-bold text-sm text-slate-950 flex items-center gap-2">
                 <Box className="h-4.5 w-4.5 text-emerald-600" />
-                Stok Barang Titipan Reseller
+                Stok Paket Bundling Reseller
               </h3>
               {resellers.length === 0 ? (
                 <p className="text-xs text-slate-500 italic py-4">Belum ada reseller yang terdaftar. Tambahkan reseller di menu "Hak Akses Client".</p>
               ) : (
                 <div className="space-y-4">
                   {resellers.map(res => {
-                    const myStocks = resellerStocks.filter(s => s.resellerEmail === res.email.trim().toLowerCase());
+                    const myPackageStocks = resellerPackageStocks.filter(s => s.resellerEmail === res.email.trim().toLowerCase());
                     const unpaidForThisReseller = consignmentSales.filter(t => t.resellerEmail?.trim().toLowerCase() === res.email.trim().toLowerCase() && t.paymentStatus === "Belum Dibayar");
                     const unpaidAmount = unpaidForThisReseller.reduce((sum, t) => sum + t.totalPrice, 0);
 
@@ -2179,48 +2156,25 @@ export default function App() {
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-3 gap-2 text-[11px]">
-                          <div>
-                            <span className="font-semibold text-slate-500 block text-[9px] uppercase">Botol</span>
-                            {myStocks.filter(s => s.type === "bottle").length === 0 ? (
-                              <span className="text-slate-400 italic">0 pcs</span>
-                            ) : (
-                              myStocks.filter(s => s.type === "bottle").map(s => (
-                                <div key={s.id} className="flex justify-between text-slate-700 pr-2">
-                                  <span>{s.size}:</span>
-                                  <span className="font-bold">{s.quantity} pcs</span>
-                                </div>
-                              ))
-                            )}
-                          </div>
-                          <div>
-                            <span className="font-semibold text-slate-500 block text-[9px] uppercase">Bibit Aroma</span>
-                            <div className="max-h-24 overflow-y-auto space-y-0.5">
-                              {myStocks.filter(s => s.type === "essence").length === 0 ? (
-                                <span className="text-slate-400 italic">0 ml</span>
-                              ) : (
-                                myStocks.filter(s => s.type === "essence").map(s => (
-                                  <div key={s.id} className="flex justify-between text-slate-700 pr-2">
-                                    <span className="truncate max-w-[60px]">{s.scentName}:</span>
-                                    <span className="font-bold">{s.quantity} ml</span>
+                        <div className="space-y-1.5 text-xs">
+                          <span className="font-semibold text-slate-500 block text-[9px] uppercase tracking-wider">Daftar Paket Titipan Tersedia:</span>
+                          {myPackageStocks.length === 0 ? (
+                            <p className="text-slate-400 italic text-xs">Belum ada paket bundling yang dikirim ke reseller ini.</p>
+                          ) : (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-40 overflow-y-auto pt-1">
+                              {myPackageStocks.map(ps => (
+                                <div key={ps.id} className="bg-white border border-slate-200 rounded-lg p-2.5 flex justify-between items-center text-xs shadow-sm">
+                                  <div>
+                                    <span className="font-bold text-slate-900 block">{ps.packageName}</span>
+                                    <span className="text-slate-500 text-[10px] block">Aroma: {ps.scentName} ({ps.bottleSize})</span>
                                   </div>
-                                ))
-                              )}
-                            </div>
-                          </div>
-                          <div>
-                            <span className="font-semibold text-slate-500 block text-[9px] uppercase">Pelarut</span>
-                            {myStocks.filter(s => s.type === "alcohol").length === 0 ? (
-                              <span className="text-slate-400 italic">0 ml</span>
-                            ) : (
-                              myStocks.filter(s => s.type === "alcohol").map(s => (
-                                <div key={s.id} className="flex justify-between text-slate-700">
-                                  <span>Absolut:</span>
-                                  <span className="font-bold">{s.quantity} ml</span>
+                                  <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-1 rounded-lg font-extrabold text-[11px] h-fit">
+                                    {ps.quantity} pcs
+                                  </span>
                                 </div>
-                              ))
-                            )}
-                          </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
@@ -2232,14 +2186,14 @@ export default function App() {
             <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm h-fit space-y-4">
               <h3 className="font-bold text-sm text-slate-950 flex items-center gap-2">
                 <PlusCircle className="h-4.5 w-4.5 text-emerald-600" />
-                Transfer Stok Baru ke Reseller
+                Kirim Paket Bundling ke Reseller
               </h3>
-              <form onSubmit={handleTransferStockSubmit} className="space-y-4">
+              <form onSubmit={handleSendPackageSubmit} className="space-y-4">
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Reseller Tujuan</label>
                   <select
-                    value={transferForm.resellerEmail}
-                    onChange={(e) => setTransferForm(prev => ({ ...prev, resellerEmail: e.target.value }))}
+                    value={sendPackageForm.resellerEmail}
+                    onChange={(e) => setSendPackageForm(prev => ({ ...prev, resellerEmail: e.target.value }))}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800 cursor-pointer font-semibold"
                     required
                   >
@@ -2251,88 +2205,74 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Tipe Komponen</label>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Pilih Paket Bundling</label>
                   <select
-                    value={transferForm.type}
-                    onChange={(e) => setTransferForm(prev => ({ ...prev, type: e.target.value as any, scentName: "", size: "30ml" }))}
+                    value={sendPackageForm.packageId}
+                    onChange={(e) => setSendPackageForm(prev => ({ ...prev, packageId: e.target.value }))}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800 cursor-pointer font-semibold"
                     required
                   >
-                    <option value="essence">Bibit Parfum (Essence)</option>
-                    <option value="bottle">Botol Kosong</option>
-                    <option value="alcohol">Absolut (Pelarut)</option>
+                    <option value="">-- Pilih Paket Bundling --</option>
+                    {bundlingPackages.map(pkg => (
+                      <option key={pkg.id} value={pkg.id}>{pkg.packageName} - Rp {pkg.price.toLocaleString("id-ID")}</option>
+                    ))}
                   </select>
                 </div>
 
-                {transferForm.type === "essence" && (
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Pilih Aroma</label>
-                    <select
-                      value={transferForm.scentName}
-                      onChange={(e) => setTransferForm(prev => ({ ...prev, scentName: e.target.value }))}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800 cursor-pointer font-semibold"
-                      required
-                    >
-                      <option value="">-- Pilih Aroma --</option>
-                      {prices.map(p => (
-                        <option key={p.id} value={p.scentName}>{p.scentName}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-
-                {transferForm.type === "bottle" && (
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Ukuran Botol</label>
-                    <select
-                      value={transferForm.size}
-                      onChange={(e) => setTransferForm(prev => ({ ...prev, size: e.target.value }))}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800 cursor-pointer font-semibold"
-                      required
-                    >
-                      {bottleSizes.map(bs => (
-                        <option key={bs.id} value={bs.name}>{bs.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-                    Jumlah / Volume ({transferForm.type === "bottle" ? "pcs" : "ml"})
+                    Jumlah Kirim (pcs)
                   </label>
                   <input
                     type="number"
                     min="1"
-                    value={transferForm.quantity || ""}
-                    onChange={(e) => setTransferForm(prev => ({ ...prev, quantity: parseInt(e.target.value) || 0 }))}
+                    value={sendPackageForm.quantity || ""}
+                    onChange={(e) => setSendPackageForm(prev => ({ ...prev, quantity: parseInt(e.target.value) || 0 }))}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800 font-semibold"
                     required
                   />
                 </div>
 
                 {(() => {
-                  let availMaster = 0;
-                  if (transferForm.type === "bottle") {
-                    availMaster = stocks.find(s => s.type === "bottle" && s.size === transferForm.size)?.quantity || 0;
-                  } else if (transferForm.type === "essence") {
-                    availMaster = stocks.find(s => s.type === "essence" && s.scentName === transferForm.scentName)?.quantity || 0;
-                  } else {
-                    availMaster = stocks.find(s => s.type === "alcohol")?.quantity || 0;
-                  }
+                  const selectedPkg = bundlingPackages.find(p => p.id === sendPackageForm.packageId);
+                  if (!selectedPkg) return null;
 
-                  const hasEnough = availMaster >= transferForm.quantity;
+                  const reqBottle = sendPackageForm.quantity;
+                  const reqEssence = selectedPkg.essenceMl * sendPackageForm.quantity;
+                  const reqAlcohol = selectedPkg.alcoholMl * sendPackageForm.quantity;
+
+                  const availBottle = stocks.find(s => s.type === "bottle" && s.size === selectedPkg.bottleSize)?.quantity || 0;
+                  const availEssence = stocks.find(s => s.type === "essence" && s.scentName === selectedPkg.scentName)?.quantity || 0;
+                  const availAlcohol = stocks.find(s => s.type === "alcohol")?.quantity || 0;
+
+                  const hasEnoughBottle = availBottle >= reqBottle;
+                  const hasEnoughEssence = availEssence >= reqEssence;
+                  const hasEnoughAlcohol = availAlcohol >= reqAlcohol;
+                  const hasEnoughAll = hasEnoughBottle && hasEnoughEssence && hasEnoughAlcohol;
 
                   return (
-                    <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-1">
-                      <div className="flex justify-between text-[11px] text-slate-500">
-                        <span>Stok Gudang Utama:</span>
-                        <span className={`font-bold ${hasEnough ? "text-emerald-600" : "text-rose-600"}`}>
-                          {availMaster} {transferForm.type === "bottle" ? "pcs" : "ml"}
+                    <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-1.5 text-xs">
+                      <span className="font-bold text-slate-600 block text-[10px] uppercase">Estimasi Bahan Diperlukan:</span>
+                      <div className="flex justify-between">
+                        <span>Botol {selectedPkg.bottleSize}:</span>
+                        <span className={hasEnoughBottle ? "text-emerald-600" : "text-rose-600 font-bold"}>
+                          {reqBottle} pcs (Stok: {availBottle})
                         </span>
                       </div>
-                      {!hasEnough && transferForm.quantity > 0 && (
-                        <p className="text-[10px] text-rose-500 italic">Peringatan: Stok utama tidak cukup!</p>
+                      <div className="flex justify-between">
+                        <span>Bibit {selectedPkg.scentName}:</span>
+                        <span className={hasEnoughEssence ? "text-emerald-600" : "text-rose-600 font-bold"}>
+                          {reqEssence} ml (Stok: {availEssence} ml)
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Cairan Absolut:</span>
+                        <span className={hasEnoughAlcohol ? "text-emerald-600" : "text-rose-600 font-bold"}>
+                          {reqAlcohol} ml (Stok: {availAlcohol} ml)
+                        </span>
+                      </div>
+                      {!hasEnoughAll && sendPackageForm.quantity > 0 && (
+                        <p className="text-[10px] text-rose-500 italic mt-1">Peringatan: Stok bahan utama tidak cukup untuk dirakit!</p>
                       )}
                     </div>
                   );
@@ -2342,7 +2282,7 @@ export default function App() {
                   type="submit"
                   className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs py-2 rounded-xl transition-all cursor-pointer shadow"
                 >
-                  Konfirmasi Transfer Stok
+                  Kirim Paket ke Reseller
                 </button>
               </form>
             </div>
@@ -2404,15 +2344,28 @@ export default function App() {
               </h3>
               <form onSubmit={handleAddBundlingSubmit} className="space-y-4">
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Nama Paket</label>
-                  <input
-                    type="text"
-                    placeholder="Contoh: Paket 30ml Medium"
-                    value={newBundling.packageName}
-                    onChange={(e) => setNewBundling(prev => ({ ...prev, packageName: e.target.value }))}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800 font-semibold"
-                    required
-                  />
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Nama Aroma (Bibit)</label>
+                  {(() => {
+                    const availableScents = Array.from(new Set(stocks.filter(s => s.type === "essence" && s.scentName).map(s => s.scentName)));
+                    return (
+                      <>
+                        <input
+                          type="text"
+                          list="scents-autocomplete-list"
+                          placeholder="Contoh: Black Opium"
+                          value={newBundling.scentName || ""}
+                          onChange={(e) => setNewBundling(prev => ({ ...prev, scentName: e.target.value }))}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800 font-semibold"
+                          required
+                        />
+                        <datalist id="scents-autocomplete-list">
+                          {availableScents.map(scent => (
+                            <option key={scent} value={scent} />
+                          ))}
+                        </datalist>
+                      </>
+                    );
+                  })()}
                 </div>
 
                 <div>
@@ -2442,15 +2395,16 @@ export default function App() {
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Absolut (ml)</label>
-                    <input
-                      type="number"
-                      min="1"
-                      value={newBundling.alcoholMl || ""}
-                      onChange={(e) => setNewBundling(prev => ({ ...prev, alcoholMl: parseInt(e.target.value) || 0 }))}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 font-semibold"
-                      required
-                    />
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Absolut (ml) - Otomatis</label>
+                    <div className="w-full bg-slate-100 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-500 font-bold">
+                      {(() => {
+                        const parseSizeNumber = (sizeStr: string): number => {
+                          return parseInt(sizeStr.replace(/[^0-9]/g, "")) || 0;
+                        };
+                        const capacity = parseSizeNumber(newBundling.bottleSize);
+                        return Math.max(0, capacity - (newBundling.essenceMl || 0));
+                      })()} ml
+                    </div>
                   </div>
                 </div>
 
@@ -2465,6 +2419,13 @@ export default function App() {
                     required
                   />
                 </div>
+
+                {newBundling.scentName.trim() && (
+                  <div className="bg-emerald-50/50 p-3 rounded-lg border border-emerald-100 text-[11px] text-slate-600">
+                    <span className="font-bold text-emerald-800 block mb-0.5">Preview Nama Paket (Otomatis):</span>
+                    <p className="font-mono font-bold text-slate-700">Aroma {newBundling.scentName.trim()} - {newBundling.bottleSize}</p>
+                  </div>
+                )}
 
                 <button
                   type="submit"

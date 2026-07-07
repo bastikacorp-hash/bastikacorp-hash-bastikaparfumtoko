@@ -120,9 +120,20 @@ export interface ResellerStock {
   quantity: number;
 }
 
+export interface ResellerPackageStock {
+  id: string; // resellerEmail_packageId
+  resellerEmail: string;
+  packageId: string;
+  packageName: string;
+  scentName: string;
+  bottleSize: string;
+  quantity: number;
+}
+
 export interface BundlingPackage {
   id: string;
   packageName: string;
+  scentName?: string;
   bottleSize: string;
   essenceMl: number;
   alcoholMl: number;

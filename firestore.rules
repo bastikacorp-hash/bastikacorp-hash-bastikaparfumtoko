@@ -98,5 +98,23 @@ service cloud.firestore {
       allow read: if isWhitelisted();
       allow write: if isWhitelisted();
     }
+
+    // Bundling Packages / Paket Bundling
+    match /bundling_packages/{pkgId} {
+      allow read: if isWhitelisted();
+      allow write: if isAdmin();
+    }
+
+    // Reseller Stocks / Stok Komponen Reseller
+    match /reseller_stocks/{stockId} {
+      allow read: if isWhitelisted();
+      allow write: if isWhitelisted();
+    }
+
+    // Reseller Package Stocks / Stok Paket Bundling Reseller
+    match /reseller_package_stocks/{stockId} {
+      allow read: if isWhitelisted();
+      allow write: if isWhitelisted();
+    }
   }
 }

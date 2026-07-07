@@ -1567,6 +1567,98 @@ export async function sendBundlingPackageToReseller(
   });
 }
 
+export async function returBundlingPackageFromReseller(
+  resellerEmail: string,
+  packageId: string,
+  quantityToReturn: number,
+  operatorEmail: string
+) {
+  const safeEmail = resellerEmail.trim().toLowerCase().replace(/[^a-z0-9@.]+/g, "_");
+  const resellerPkgStockId = `${safeEmail}_${packageId}`;
+
+  await runTransaction(db, async (transaction) => {
+    // 1. Get bundling package details (Read 1)
+    const pkgRef = doc(db, "bundling_packages", packageId);
+    const pkgSnap = await transaction.get(pkgRef);
+    if (!pkgSnap.exists()) {
+      throw new Error("Formula paket bundling tidak ditemukan!");
+    }
+    const pkg = pkgSnap.data() as BundlingPackage;
+    if (!pkg.scentName) {
+      throw new Error("Paket bundling tidak memiliki aroma bibit parfum yang terkonfigurasi!");
+    }
+
+    // 2. Define master component stock IDs
+    const essenceStockId = `essence_${pkg.scentName.replace(/\s+/g, "_").toLowerCase()}`;
+    const bottleStockId = `bottle_${pkg.bottleSize}`;
+    const alcoholStockId = "alcohol_main";
+
+    const essenceRef = doc(db, "stocks", essenceStockId);
+    const bottleRef = doc(db, "stocks", bottleStockId);
+    const alcoholRef = doc(db, "stocks", alcoholStockId);
+    const resellerPkgStockRef = doc(db, "reseller_package_stocks", resellerPkgStockId);
+
+    // 3. Fetch all other master and reseller stock documents (Read 2, 3, 4, 5)
+    const essenceSnap = await transaction.get(essenceRef);
+    const bottleSnap = await transaction.get(bottleRef);
+    const alcoholSnap = await transaction.get(alcoholRef);
+    const resellerPkgStockSnap = await transaction.get(resellerPkgStockRef);
+
+    if (!resellerPkgStockSnap.exists()) {
+      throw new Error("Stok paket reseller tidak ditemukan!");
+    }
+
+    const currentResellerQty = resellerPkgStockSnap.data().quantity || 0;
+    if (currentResellerQty < quantityToReturn) {
+      throw new Error(`Stok paket reseller tidak mencukupi untuk di-retur! Tersedia: ${currentResellerQty} pcs, Ingin di-retur: ${quantityToReturn} pcs`);
+    }
+
+    // 4. Calculate total returned ingredients
+    const totalEssenceReturned = pkg.essenceMl * quantityToReturn;
+    const totalBottleReturned = quantityToReturn;
+    const totalAlcoholReturned = pkg.alcoholMl * quantityToReturn;
+
+    // === ALL READS COMPLETED. NOW DO ALL WRITES ===
+
+    // 5. Update Master Stocks (add back the ingredients)
+    const currentEssence = essenceSnap.exists() ? (essenceSnap.data().quantity || 0) : 0;
+    const currentBottle = bottleSnap.exists() ? (bottleSnap.data().quantity || 0) : 0;
+    const currentAlcohol = alcoholSnap.exists() ? (alcoholSnap.data().quantity || 0) : 0;
+
+    transaction.update(essenceRef, { quantity: currentEssence + totalEssenceReturned });
+    transaction.update(bottleRef, { quantity: currentBottle + totalBottleReturned });
+    transaction.update(alcoholRef, { quantity: currentAlcohol + totalAlcoholReturned });
+
+    // 6. Decrement Reseller Package Stock
+    const newResellerQty = currentResellerQty - quantityToReturn;
+    if (newResellerQty <= 0) {
+      transaction.delete(resellerPkgStockRef);
+    } else {
+      transaction.update(resellerPkgStockRef, { quantity: newResellerQty });
+    }
+
+    // 7. Log the return/cancellation transaction
+    const txId = "tx_transfer_" + generateId();
+    const txRef = doc(db, "transactions", txId);
+    transaction.set(txRef, {
+      id: txId,
+      type: "transfer",
+      date: new Date().toISOString(),
+      category: "bundling",
+      scentName: pkg.scentName,
+      bottleSize: pkg.bottleSize,
+      bottleCount: -quantityToReturn,
+      volumeMl: -totalEssenceReturned,
+      totalPrice: 0,
+      description: `Retur/Batal Kirim Paket Bundling ${pkg.packageName} (${pkg.scentName}) sebanyak ${quantityToReturn} unit dari ${resellerEmail}`,
+      operatorEmail,
+      resellerEmail: resellerEmail.trim().toLowerCase(),
+      isConsignment: true,
+      packageName: pkg.packageName
+    });
+  });
+}
+
 export function subscribeToBundlingPackages(callback: (packages: BundlingPackage[]) => void) {
   return onSnapshot(query(collection(db, "bundling_packages"), orderBy("addedAt", "desc")), (snapshot) => {
     const list: BundlingPackage[] = [];

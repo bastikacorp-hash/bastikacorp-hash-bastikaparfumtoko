@@ -58,6 +58,7 @@ import {
   updateBundlingPackage,
   transferStockToReseller,
   sendBundlingPackageToReseller,
+  returBundlingPackageFromReseller,
   addResellerSaleTransaction,
   settleResellerTransaction
 } from "./dbService";
@@ -91,6 +92,7 @@ import {
   LogOut, 
   Lock, 
   RefreshCw, 
+  RotateCcw,
   AlertCircle, 
   Activity, 
   Calendar, 
@@ -172,6 +174,16 @@ export default function App() {
     packageId: "",
     quantity: 1
   });
+  const [returnPackageForm, setReturnPackageForm] = useState({
+    resellerEmail: "",
+    packageId: "",
+    packageName: "",
+    scentName: "",
+    bottleSize: "",
+    availableQty: 0,
+    quantityToReturn: 1
+  });
+  const [showReturnPackageModal, setShowReturnPackageModal] = useState(false);
   const [resellerSaleForm, setResellerSaleForm] = useState({
     packageId: "",
     scentName: "",
@@ -1762,6 +1774,41 @@ export default function App() {
     }
   };
 
+  const handleOpenReturnModal = (ps: ResellerPackageStock) => {
+    setReturnPackageForm({
+      resellerEmail: ps.resellerEmail,
+      packageId: ps.packageId,
+      packageName: ps.packageName,
+      scentName: ps.scentName,
+      bottleSize: ps.bottleSize,
+      availableQty: ps.quantity,
+      quantityToReturn: ps.quantity
+    });
+    setShowReturnPackageModal(true);
+  };
+
+  const handleReturnPackageSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const { resellerEmail, packageId, quantityToReturn, availableQty } = returnPackageForm;
+    if (quantityToReturn <= 0) {
+      showToast("Jumlah retur harus lebih besar dari 0!", "error");
+      return;
+    }
+    if (quantityToReturn > availableQty) {
+      showToast(`Jumlah retur melebihi stok yang tersedia (${availableQty} pcs)!`, "error");
+      return;
+    }
+
+    try {
+      const operator = currentUser?.email || customEmail || "admin";
+      await returBundlingPackageFromReseller(resellerEmail, packageId, quantityToReturn, operator);
+      showToast(`Berhasil memproses retur/pembatalan ${quantityToReturn} unit paket bundling dari reseller!`, "success");
+      setShowReturnPackageModal(false);
+    } catch (err: any) {
+      showToast(err.message || "Gagal memproses retur paket bundling", "error");
+    }
+  };
+
   const handleAddBundlingSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const { scentName, bottleSize, essenceMl, price, customSuffix } = newBundling;
@@ -2264,9 +2311,21 @@ export default function App() {
                                     <span className="font-bold text-slate-900 block">{ps.packageName}</span>
                                     <span className="text-slate-500 text-[10px] block">Aroma: {ps.scentName} ({ps.bottleSize})</span>
                                   </div>
-                                  <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-1 rounded-lg font-extrabold text-[11px] h-fit">
-                                    {ps.quantity} pcs
-                                  </span>
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-lg font-extrabold text-[10px] h-fit">
+                                      {ps.quantity} pcs
+                                    </span>
+                                    {userRole === "admin" && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenReturnModal(ps)}
+                                        className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors cursor-pointer"
+                                        title="Retur / Batal Kirim"
+                                      >
+                                        <RotateCcw className="h-3.5 w-3.5" />
+                                      </button>
+                                    )}
+                                  </div>
                                 </div>
                               ))}
                             </div>
@@ -6389,6 +6448,89 @@ export default function App() {
                     Simpan Perubahan
                   </button>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* ==========================================
+              RETUR / BATAL KIRIM PAKET BUNDLING RESELLER MODAL (Admin Only)
+              ========================================== */}
+          {showReturnPackageModal && (
+            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-3xl max-w-md w-full border border-slate-200 shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+                <div className="bg-slate-900 text-white p-5 flex items-center justify-between">
+                  <div>
+                    <h3 className="font-bold text-sm font-display flex items-center gap-1.5">
+                      <RotateCcw className="h-4 w-4 text-rose-400" />
+                      Retur / Batal Kirim Paket
+                    </h3>
+                    <p className="text-[10px] text-slate-400">Kembalikan stok komponen paket ke persediaan gudang utama.</p>
+                  </div>
+                  <button 
+                    onClick={() => setShowReturnPackageModal(false)}
+                    className="text-slate-400 hover:text-white transition-colors cursor-pointer"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+                
+                <form onSubmit={handleReturnPackageSubmit}>
+                  <div className="p-6 space-y-4">
+                    <div className="grid grid-cols-2 gap-3 text-xs">
+                      <div>
+                        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-0.5">Reseller</span>
+                        <span className="font-bold text-slate-800 block truncate">{returnPackageForm.resellerEmail}</span>
+                      </div>
+                      <div>
+                        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-0.5">Nama Paket</span>
+                        <span className="font-bold text-slate-800 block truncate">{returnPackageForm.packageName}</span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 text-xs border-t border-slate-100 pt-3">
+                      <div>
+                        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-0.5">Aroma & Botol</span>
+                        <span className="font-semibold text-slate-600 block">{returnPackageForm.scentName} ({returnPackageForm.bottleSize})</span>
+                      </div>
+                      <div>
+                        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-0.5">Stok di Reseller</span>
+                        <span className="font-extrabold text-emerald-600 block">{returnPackageForm.availableQty} pcs</span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5 border-t border-slate-100 pt-3">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Jumlah Paket yang Diretur / Dibatalkan</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max={returnPackageForm.availableQty}
+                        value={returnPackageForm.quantityToReturn}
+                        onChange={(e) => setReturnPackageForm(prev => ({ ...prev, quantityToReturn: Math.min(prev.availableQty, Math.max(1, parseInt(e.target.value) || 1)) }))}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800 font-extrabold"
+                        required
+                      />
+                      <p className="text-[10px] text-slate-400 italic">
+                        * Mengembalikan paket ini akan otomatis menambahkan kembali stok bibit, pelarut, dan botol ke Persediaan Master sesuai resep formula paket.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-50 px-6 py-4 flex justify-end gap-3 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => setShowReturnPackageModal(false)}
+                      className="border border-slate-200 text-slate-600 font-bold text-xs px-4 py-2 rounded-xl hover:bg-slate-100 transition-colors cursor-pointer"
+                    >
+                      Batal
+                    </button>
+                    <button
+                      type="submit"
+                      className="bg-rose-600 hover:bg-rose-500 text-white font-extrabold text-xs px-5 py-2 rounded-xl transition-all shadow-sm cursor-pointer"
+                    >
+                      Proses Retur / Batal
+                    </button>
+                  </div>
+                </form>
               </div>
             </div>
           )}

@@ -177,7 +177,7 @@ export default function App() {
     scentName: "",
     quantity: 1
   });
-  const [resellerActiveTab, setResellerActiveTab] = useState<"katalog" | "setoran" | "penjualan">("katalog");
+  const [resellerActiveTab, setResellerActiveTab] = useState<"setoran" | "penjualan">("penjualan");
   const [adminActiveConsignmentTab, setAdminActiveConsignmentTab] = useState<"dashboard" | "packages" | "transfers" | "piutang">("dashboard");
 
   // Invoice settings & Print state
@@ -1724,6 +1724,34 @@ export default function App() {
       return;
     }
 
+    const selectedPkg = bundlingPackages.find(p => p.id === packageId);
+    if (!selectedPkg) {
+      showToast("Paket bundling tidak ditemukan!", "error");
+      return;
+    }
+
+    // Client-side verification of stock levels
+    const reqBottle = quantity;
+    const reqEssence = selectedPkg.essenceMl * quantity;
+    const reqAlcohol = selectedPkg.alcoholMl * quantity;
+
+    const availBottle = stocks.find(s => s.type === "bottle" && s.size === selectedPkg.bottleSize)?.quantity || 0;
+    const availEssence = stocks.find(s => s.type === "essence" && s.scentName?.trim().toLowerCase() === selectedPkg.scentName?.trim().toLowerCase())?.quantity || 0;
+    const availAlcohol = stocks.find(s => s.type === "alcohol")?.quantity || 0;
+
+    if (availBottle < reqBottle) {
+      showToast(`Stok utama botol ukuran ${selectedPkg.bottleSize} tidak mencukupi! Tersedia: ${availBottle} pcs, Butuh: ${reqBottle} pcs`, "error");
+      return;
+    }
+    if (availEssence < reqEssence) {
+      showToast(`Stok utama bibit aroma ${selectedPkg.scentName} tidak mencukupi! Tersedia: ${availEssence} ml, Butuh: ${reqEssence} ml`, "error");
+      return;
+    }
+    if (availAlcohol < reqAlcohol) {
+      showToast(`Stok utama cairan pelarut (Absolut) tidak mencukupi! Tersedia: ${availAlcohol} ml, Butuh: ${reqAlcohol} ml`, "error");
+      return;
+    }
+
     try {
       const operator = currentUser?.email || customEmail || "admin";
       await sendBundlingPackageToReseller(resellerEmail, packageId, quantity, operator);
@@ -1857,69 +1885,7 @@ export default function App() {
   // ==========================================
   // RESELLER RENDERING LOGIC
   // ==========================================
-  const renderResellerKatalog = () => {
-    const emailKey = (currentUser?.email || customEmail || "").trim().toLowerCase();
-    const myPackageStocks = resellerPackageStocks.filter(s => s.resellerEmail === emailKey && s.quantity > 0);
-    
-    return (
-      <div className="space-y-6 animate-in fade-in duration-300">
-        <div>
-          <h3 className="text-sm font-bold text-slate-300 mb-4 flex items-center gap-2">
-            <ShoppingBag className="h-4.5 w-4.5 text-emerald-400" />
-            Daftar Paket Bundling Tersedia Anda
-          </h3>
-          {myPackageStocks.length === 0 ? (
-            <div className="bg-slate-950/40 border border-slate-800 rounded-2xl p-8 text-center text-slate-500 italic">
-              Belum ada paket bundling titipan yang dikirimkan oleh Admin ke Anda.
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {myPackageStocks.map(pkgStock => {
-                const pkgFormula = bundlingPackages.find(p => p.id === pkgStock.packageId);
-                const price = pkgFormula ? pkgFormula.price : 0;
-                return (
-                  <div key={pkgStock.id} className="bg-slate-950/40 border border-slate-800 rounded-2xl p-5 hover:border-slate-700 transition-all flex flex-col justify-between">
-                    <div>
-                      <h4 className="text-base font-bold text-white">{pkgStock.packageName}</h4>
-                      <p className="text-xs text-slate-400 mt-1">Aroma: {pkgStock.scentName}</p>
-                      <p className="text-xs text-slate-400">Ukuran Botol: {pkgStock.bottleSize}</p>
-                      
-                      <div className="mt-4 pt-4 border-t border-slate-800/80 space-y-1">
-                        <span className="text-[10px] uppercase font-bold text-slate-500 block">Stok Tersedia:</span>
-                        <p className="text-lg font-bold text-white">{pkgStock.quantity} pcs</p>
-                      </div>
-                    </div>
-
-                    <div className="mt-6 pt-4 border-t border-slate-800/80 flex justify-between items-center">
-                      <div>
-                        <span className="text-[10px] uppercase font-bold text-slate-500">Harga Jual</span>
-                        <p className="text-lg font-bold text-emerald-400">Rp {price.toLocaleString("id-ID")}</p>
-                      </div>
-                      <button
-                        onClick={() => {
-                          setResellerSaleForm({
-                            packageId: pkgStock.packageId,
-                            scentName: pkgStock.scentName,
-                            quantity: 1
-                          });
-                          setResellerActiveTab("penjualan");
-                        }}
-                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-2 px-4 rounded-xl transition-all cursor-pointer"
-                      >
-                        Jual Paket
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  };
-
-  const renderResellerPenjualanForm = () => {
+  const renderResellerPenjualan = () => {
     const emailKey = (currentUser?.email || customEmail || "").trim().toLowerCase();
     const myPackageStocks = resellerPackageStocks.filter(s => 
       s.resellerEmail === emailKey && 
@@ -1927,99 +1893,195 @@ export default function App() {
     );
 
     return (
-      <div className="max-w-xl mx-auto bg-slate-950/40 border border-slate-800 rounded-2xl p-6 shadow-xl animate-in fade-in duration-300">
-        <h3 className="text-base font-bold text-white mb-6 flex items-center gap-2 border-b border-slate-800 pb-3">
-          <PlusCircle className="h-5 w-5 text-emerald-400" />
-          Form Input Penjualan Paket Bundling
-        </h3>
-
-        <form onSubmit={handleResellerSaleSubmit} className="space-y-5">
-          <div>
-            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Pilih Paket Bundling</label>
-            <select
-              value={resellerSaleForm.packageId}
-              onChange={(e) => {
-                const selectedStock = myPackageStocks.find(s => s.packageId === e.target.value);
-                setResellerSaleForm({
-                  packageId: e.target.value,
-                  scentName: selectedStock ? selectedStock.scentName : "",
-                  quantity: 1
-                });
-              }}
-              className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 text-white cursor-pointer font-semibold"
-              required
-            >
-              <option value="">-- Pilih Paket --</option>
-              {myPackageStocks.map(s => {
-                const pkgFormula = bundlingPackages.find(p => p.id === s.packageId);
-                const priceStr = pkgFormula ? ` - Rp ${pkgFormula.price.toLocaleString("id-ID")}` : "";
-                return (
-                  <option key={s.id} value={s.packageId}>
-                    {s.packageName} (Stok: {s.quantity} pcs){priceStr}
-                  </option>
-                );
-              })}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Jumlah Paket Terjual (Unit)</label>
-            <input
-              type="number"
-              min="1"
-              value={resellerSaleForm.quantity}
-              onChange={(e) => setResellerSaleForm(prev => ({ ...prev, quantity: parseInt(e.target.value) || 1 }))}
-              className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 text-white font-semibold"
-              required
-            />
-          </div>
-
-          {resellerSaleForm.packageId && (() => {
-            const selectedStock = myPackageStocks.find(s => s.packageId === resellerSaleForm.packageId);
-            if (!selectedStock) return null;
-            
-            const isStockOk = selectedStock.quantity >= resellerSaleForm.quantity;
-
-            return (
-              <div className="bg-slate-900/80 rounded-xl p-4 border border-slate-800 space-y-3">
-                <span className="text-[10px] uppercase font-bold text-slate-500">Info Transaksi & Stok:</span>
-                <div className="space-y-1.5 text-xs text-slate-300">
-                  <div className="flex justify-between">
-                    <span>Aroma Parfum:</span>
-                    <span className="font-bold text-white">{selectedStock.scentName}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Ukuran Botol:</span>
-                    <span className="font-bold text-white">{selectedStock.bottleSize}</span>
-                  </div>
-                  <div className="flex justify-between pb-1.5 border-b border-slate-800">
-                    <span>Stok Titipan Tersedia:</span>
-                    <span className="font-bold text-white">{selectedStock.quantity} pcs</span>
-                  </div>
-                  <div className="flex justify-between pt-1 font-bold text-sm text-white">
-                    <span>Sisa Setelah Penjualan:</span>
-                    <span className={isStockOk ? "text-emerald-400" : "text-rose-400"}>
-                      {selectedStock.quantity - resellerSaleForm.quantity} pcs
-                    </span>
-                  </div>
-                </div>
-                {!isStockOk && (
-                  <p className="text-[11px] text-rose-400 font-semibold italic">
-                    Stok tidak mencukupi untuk melakukan transaksi ini!
-                  </p>
-                )}
+      <div className="space-y-6 animate-in fade-in duration-300">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          {/* Left Panel: Katalog Paket Konsinyasi (Siap Jual) */}
+          <div className="lg:col-span-2 space-y-4">
+            <h3 className="text-sm font-bold text-slate-300 flex items-center gap-2">
+              <ShoppingBag className="h-4.5 w-4.5 text-emerald-400" />
+              Katalog Paket Siap Jual
+            </h3>
+            {myPackageStocks.length === 0 ? (
+              <div className="bg-slate-950/40 border border-slate-800 rounded-2xl p-8 text-center text-slate-500 italic">
+                Belum ada paket bundling titipan yang dikirimkan oleh Admin ke Anda.
               </div>
-            );
-          })()}
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {myPackageStocks.map(pkgStock => {
+                  const pkgFormula = bundlingPackages.find(p => p.id === pkgStock.packageId);
+                  const price = pkgFormula ? pkgFormula.price : 0;
+                  const isSelected = resellerSaleForm.packageId === pkgStock.packageId;
 
-          <button
-            type="submit"
-            className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm py-3 px-4 rounded-xl transition-all cursor-pointer flex justify-center items-center gap-2"
-          >
-            <Check className="h-4.5 w-4.5" />
-            Konfirmasi & Jual Paket
-          </button>
-        </form>
+                  return (
+                    <div 
+                      key={pkgStock.id} 
+                      className={`bg-slate-950/40 border rounded-2xl p-5 transition-all flex flex-col justify-between cursor-pointer ${
+                        isSelected 
+                          ? "border-emerald-500 ring-1 ring-emerald-500 bg-slate-900/60" 
+                          : "border-slate-800 hover:border-slate-700"
+                      }`}
+                      onClick={() => {
+                        setResellerSaleForm({
+                          packageId: pkgStock.packageId,
+                          scentName: pkgStock.scentName,
+                          quantity: 1
+                        });
+                      }}
+                    >
+                      <div className="space-y-3">
+                        <div className="flex justify-between items-start gap-2">
+                          <h4 className="text-sm font-bold text-white leading-snug">{pkgStock.packageName}</h4>
+                          {isSelected && (
+                            <span className="bg-emerald-500/10 text-emerald-400 text-[10px] font-extrabold px-2 py-0.5 rounded-full border border-emerald-500/20">
+                              Terpilih
+                            </span>
+                          )}
+                        </div>
+                        
+                        <div className="flex justify-between items-end pt-2 border-t border-slate-800/60">
+                          <div>
+                            <span className="text-[9px] uppercase font-bold text-slate-500 block">Stok Anda</span>
+                            <span className="text-sm font-extrabold text-white">{pkgStock.quantity} pcs</span>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-[9px] uppercase font-bold text-slate-500 block">Harga Jual</span>
+                            <span className="text-sm font-extrabold text-emerald-400">Rp {price.toLocaleString("id-ID")}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Right Panel: Form Input Penjualan Simpel */}
+          <div className="bg-slate-950/40 border border-slate-800 rounded-2xl p-6 shadow-xl h-fit space-y-6">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-3">
+              <PlusCircle className="h-4.5 w-4.5 text-emerald-400" />
+              Input Penjualan
+            </h3>
+
+            {!resellerSaleForm.packageId ? (
+              <div className="text-center py-8 px-4 text-slate-500 text-xs italic space-y-2">
+                <p>Silakan klik/pilih salah satu paket dari katalog di sebelah kiri untuk mulai menginput penjualan.</p>
+              </div>
+            ) : (() => {
+              const selectedStock = myPackageStocks.find(s => s.packageId === resellerSaleForm.packageId);
+              if (!selectedStock) {
+                return (
+                  <p className="text-xs text-slate-500 italic text-center">Stok paket terpilih tidak tersedia.</p>
+                );
+              }
+
+              const pkgFormula = bundlingPackages.find(p => p.id === selectedStock.packageId);
+              const price = pkgFormula ? pkgFormula.price : 0;
+              const isStockOk = selectedStock.quantity >= resellerSaleForm.quantity;
+              const totalAmount = price * resellerSaleForm.quantity;
+
+              return (
+                <form onSubmit={handleResellerSaleSubmit} className="space-y-5">
+                  <div className="bg-slate-900/60 rounded-xl p-4 border border-slate-800 space-y-3">
+                    <span className="text-[10px] uppercase font-bold text-slate-500">Detail Paket Terpilih:</span>
+                    <div className="space-y-1">
+                      <p className="text-xs font-bold text-white">{selectedStock.packageName}</p>
+                      <div className="flex justify-between text-xs text-slate-400 pt-1">
+                        <span>Stok Tersedia:</span>
+                        <span className="font-bold text-white">{selectedStock.quantity} pcs</span>
+                      </div>
+                      <div className="flex justify-between text-xs text-slate-400">
+                        <span>Harga Satuan:</span>
+                        <span className="font-bold text-emerald-400">Rp {price.toLocaleString("id-ID")}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">Jumlah Terjual (Unit)</label>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (resellerSaleForm.quantity > 1) {
+                            setResellerSaleForm(prev => ({ ...prev, quantity: prev.quantity - 1 }));
+                          }
+                        }}
+                        className="bg-slate-800 hover:bg-slate-700 text-white font-extrabold px-3 py-2 rounded-lg text-sm select-none transition-all cursor-pointer"
+                      >
+                        -
+                      </button>
+                      <input
+                        type="number"
+                        min="1"
+                        value={resellerSaleForm.quantity}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value) || 1;
+                          setResellerSaleForm(prev => ({ ...prev, quantity: val }));
+                        }}
+                        className="w-full text-center bg-slate-900 border border-slate-800 rounded-lg py-2 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 text-white font-bold"
+                        required
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (resellerSaleForm.quantity < selectedStock.quantity) {
+                            setResellerSaleForm(prev => ({ ...prev, quantity: prev.quantity + 1 }));
+                          }
+                        }}
+                        className="bg-slate-800 hover:bg-slate-700 text-white font-extrabold px-3 py-2 rounded-lg text-sm select-none transition-all cursor-pointer"
+                      >
+                        +
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-slate-500 italic mt-1">Anda dapat mengetik langsung atau menggunakan tombol - / + untuk menyesuaikan jumlah.</p>
+                  </div>
+
+                  <div className="bg-slate-900/60 rounded-xl p-4 border border-slate-800 space-y-2 text-xs">
+                    <div className="flex justify-between text-slate-400">
+                      <span>Total Setoran:</span>
+                      <span className="font-extrabold text-white text-sm">Rp {totalAmount.toLocaleString("id-ID")}</span>
+                    </div>
+                    <div className="flex justify-between text-slate-400 pt-1.5 border-t border-slate-800">
+                      <span>Sisa Stok Anda:</span>
+                      <span className={`font-bold ${isStockOk ? "text-emerald-400" : "text-rose-400"}`}>
+                        {selectedStock.quantity - resellerSaleForm.quantity} pcs
+                      </span>
+                    </div>
+                  </div>
+
+                  {!isStockOk && (
+                    <p className="text-[11px] text-rose-400 font-bold italic bg-rose-950/20 border border-rose-900/40 p-2.5 rounded-lg">
+                      Peringatan: Stok titipan Anda tidak mencukupi untuk jumlah ini!
+                    </p>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-2 pt-2">
+                    <button
+                      type="submit"
+                      disabled={!isStockOk}
+                      className={`w-full font-bold text-xs py-2.5 px-3 rounded-xl transition-all flex justify-center items-center gap-1.5 cursor-pointer ${
+                        isStockOk 
+                          ? "bg-emerald-600 hover:bg-emerald-500 text-white shadow" 
+                          : "bg-slate-800 text-slate-500 cursor-not-allowed opacity-50"
+                      }`}
+                    >
+                      <Check className="h-4 w-4" />
+                      Konfirmasi & Jual
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setResellerSaleForm({ packageId: "", scentName: "", quantity: 1 })}
+                      className="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs py-2.5 px-3 rounded-xl transition-all cursor-pointer"
+                    >
+                      Batal
+                    </button>
+                  </div>
+                </form>
+              );
+            })()}
+          </div>
+        </div>
       </div>
     );
   };
@@ -2635,23 +2697,13 @@ export default function App() {
 
           <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
             <button
-              onClick={() => setResellerActiveTab("katalog")}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition-colors cursor-pointer ${
-                resellerActiveTab === "katalog" ? "bg-emerald-600 text-white font-bold" : "text-slate-400 hover:bg-slate-800 hover:text-white"
-              }`}
-            >
-              <ShoppingBag className="h-4 w-4" />
-              Katalog Paket Titipan
-            </button>
-
-            <button
               onClick={() => setResellerActiveTab("penjualan")}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition-colors cursor-pointer ${
                 resellerActiveTab === "penjualan" ? "bg-emerald-600 text-white font-bold" : "text-slate-400 hover:bg-slate-800 hover:text-white"
               }`}
             >
-              <PlusCircle className="h-4 w-4" />
-              Form Input Penjualan
+              <ShoppingBag className="h-4 w-4" />
+              Penjualan Paket
             </button>
 
             <button
@@ -2682,9 +2734,7 @@ export default function App() {
           <header className="bg-slate-950 border-b border-slate-800 py-4 px-6 flex items-center justify-between">
             <div>
               <h1 className="text-lg font-bold font-display text-white tracking-tight">
-                {resellerActiveTab === "katalog" ? "Katalog Paket Konsinyasi" :
-                 resellerActiveTab === "penjualan" ? "Input Penjualan Bundling" :
-                 "Status Tagihan & Setoran"}
+                {resellerActiveTab === "penjualan" ? "Penjualan Paket Konsinyasi" : "Status Tagihan & Setoran"}
               </h1>
               <p className="text-xs text-slate-400">Portal Reseller Resmi Bastika Parfum</p>
             </div>
@@ -2692,8 +2742,7 @@ export default function App() {
 
           {/* Content views */}
           <div className="p-6">
-            {resellerActiveTab === "katalog" && renderResellerKatalog()}
-            {resellerActiveTab === "penjualan" && renderResellerPenjualanForm()}
+            {resellerActiveTab === "penjualan" && renderResellerPenjualan()}
             {resellerActiveTab === "setoran" && renderResellerSetoran()}
           </div>
         </main>

@@ -1590,6 +1590,10 @@ export async function deleteBundlingPackage(id: string) {
   await deleteDoc(doc(db, "bundling_packages", id));
 }
 
+export async function updateBundlingPackage(id: string, pkg: Partial<Omit<BundlingPackage, "id" | "addedAt">>) {
+  await updateDoc(doc(db, "bundling_packages", id), pkg);
+}
+
 // Transfer Stock to Reseller (Consignment)
 export async function transferStockToReseller(
   resellerEmail: string,

@@ -55,6 +55,7 @@ import {
   subscribeToBundlingPackages,
   addBundlingPackage,
   deleteBundlingPackage,
+  updateBundlingPackage,
   transferStockToReseller,
   sendBundlingPackageToReseller,
   addResellerSaleTransaction,
@@ -148,13 +149,15 @@ export default function App() {
   const [resellerPackageStocks, setResellerPackageStocks] = useState<ResellerPackageStock[]>([]);
   const [bundlingPackages, setBundlingPackages] = useState<BundlingPackage[]>([]);
   const [showAddBundling, setShowAddBundling] = useState(false);
+  const [editingBundling, setEditingBundling] = useState<BundlingPackage | null>(null);
   const [newBundling, setNewBundling] = useState({
     packageName: "",
     scentName: "",
     bottleSize: "30ml",
     essenceMl: 10,
     alcoholMl: 20,
-    price: 35000
+    price: 35000,
+    customSuffix: ""
   });
   const [showTransferStock, setShowTransferStock] = useState(false);
   const [transferForm, setTransferForm] = useState({
@@ -1746,7 +1749,7 @@ export default function App() {
 
   const handleAddBundlingSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const { scentName, bottleSize, essenceMl, price } = newBundling;
+    const { scentName, bottleSize, essenceMl, price, customSuffix } = newBundling;
     if (!scentName.trim()) {
       showToast("Nama aroma wajib diisi!", "error");
       return;
@@ -1765,36 +1768,80 @@ export default function App() {
     };
 
     const capacity = parseSizeNumber(bottleSize);
-    if (essenceMl >= capacity) {
-      showToast(`Volume bibit (${essenceMl} ml) tidak boleh melebihi atau sama dengan kapasitas botol (${capacity} ml)!`, "error");
-      return;
-    }
-
-    const calculatedAlcoholMl = capacity - essenceMl;
-    const autoPackageName = `Aroma ${scentName.trim()} - ${bottleSize}`;
+    const calculatedAlcoholMl = Math.max(0, capacity - essenceMl);
+    const suffixStr = customSuffix ? customSuffix.trim() : "";
+    const autoPackageName = `Aroma ${scentName.trim()} - ${bottleSize}${suffixStr ? ' (' + suffixStr + ')' : ''}`;
 
     try {
-      await addBundlingPackage({
-        packageName: autoPackageName,
-        scentName: scentName.trim(),
-        bottleSize,
-        essenceMl,
-        alcoholMl: calculatedAlcoholMl,
-        price
-      });
-      showToast(`Formula paket bundling "${autoPackageName}" berhasil ditambahkan!`, "success");
+      if (editingBundling) {
+        await updateBundlingPackage(editingBundling.id, {
+          packageName: autoPackageName,
+          scentName: scentName.trim(),
+          bottleSize,
+          essenceMl,
+          alcoholMl: calculatedAlcoholMl,
+          price
+        });
+        showToast(`Formula paket bundling "${autoPackageName}" berhasil diubah!`, "success");
+        setEditingBundling(null);
+      } else {
+        await addBundlingPackage({
+          packageName: autoPackageName,
+          scentName: scentName.trim(),
+          bottleSize,
+          essenceMl,
+          alcoholMl: calculatedAlcoholMl,
+          price
+        });
+        showToast(`Formula paket bundling "${autoPackageName}" berhasil ditambahkan!`, "success");
+      }
       setNewBundling({
         packageName: "",
         scentName: "",
         bottleSize: "30ml",
         essenceMl: 10,
         alcoholMl: 20,
-        price: 35000
+        price: 35000,
+        customSuffix: ""
       });
       setShowAddBundling(false);
     } catch (err: any) {
       showToast(err.message, "error");
     }
+  };
+
+  const handleStartEditBundling = (pkg: BundlingPackage) => {
+    setEditingBundling(pkg);
+    let suffix = "";
+    const matchResult = pkg.packageName.match(/\(([^)]+)\)$/);
+    if (matchResult) {
+      suffix = matchResult[1];
+    }
+    
+    setNewBundling({
+      packageName: pkg.packageName,
+      scentName: pkg.scentName || "",
+      bottleSize: pkg.bottleSize,
+      essenceMl: pkg.essenceMl,
+      alcoholMl: pkg.alcoholMl,
+      price: pkg.price,
+      customSuffix: suffix
+    });
+    setShowAddBundling(true);
+  };
+
+  const handleCancelEditBundling = () => {
+    setEditingBundling(null);
+    setNewBundling({
+      packageName: "",
+      scentName: "",
+      bottleSize: "30ml",
+      essenceMl: 10,
+      alcoholMl: 20,
+      price: 35000,
+      customSuffix: ""
+    });
+    setShowAddBundling(false);
   };
 
   const handleDeleteBundling = async (pkgId: string, pkgName: string) => {
@@ -2305,13 +2352,22 @@ export default function App() {
                       <div>
                         <div className="flex justify-between items-start">
                           <h4 className="text-xs font-bold text-slate-900">{pkg.packageName}</h4>
-                          <button
-                            onClick={() => handleDeleteBundling(pkg.id, pkg.packageName)}
-                            className="text-rose-500 hover:text-rose-700 p-1"
-                            title="Hapus Paket"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
+                          <div className="flex gap-1">
+                            <button
+                              onClick={() => handleStartEditBundling(pkg)}
+                              className="text-amber-600 hover:text-amber-800 p-1"
+                              title="Edit Paket"
+                            >
+                              <Edit3 className="h-4 w-4" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteBundling(pkg.id, pkg.packageName)}
+                              className="text-rose-500 hover:text-rose-700 p-1"
+                              title="Hapus Paket"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
                         </div>
                         <p className="text-[10px] text-slate-500 mt-1">Ukuran Botol: {pkg.bottleSize}</p>
                         
@@ -2340,7 +2396,7 @@ export default function App() {
             <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm h-fit space-y-4">
               <h3 className="font-bold text-sm text-slate-950 flex items-center gap-2">
                 <PlusCircle className="h-4.5 w-4.5 text-emerald-600" />
-                Buat Koleksi Paket Bundling Baru
+                {editingBundling ? "Edit Formula Paket Bundling" : "Buat Koleksi Paket Bundling Baru"}
               </h3>
               <form onSubmit={handleAddBundlingSubmit} className="space-y-4">
                 <div>
@@ -2420,19 +2476,52 @@ export default function App() {
                   />
                 </div>
 
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Label / Nama Tambahan (Opsional)</label>
+                  <input
+                    type="text"
+                    placeholder="Contoh: Premium, Formula B, Varian 2"
+                    value={newBundling.customSuffix || ""}
+                    onChange={(e) => setNewBundling(prev => ({ ...prev, customSuffix: e.target.value }))}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 font-semibold"
+                  />
+                  <p className="text-[9px] text-slate-400 mt-0.5">Gunakan label berbeda jika ingin membuat variasi paket lain dengan aroma & ukuran botol yang sama.</p>
+                </div>
+
                 {newBundling.scentName.trim() && (
                   <div className="bg-emerald-50/50 p-3 rounded-lg border border-emerald-100 text-[11px] text-slate-600">
                     <span className="font-bold text-emerald-800 block mb-0.5">Preview Nama Paket (Otomatis):</span>
-                    <p className="font-mono font-bold text-slate-700">Aroma {newBundling.scentName.trim()} - {newBundling.bottleSize}</p>
+                    <p className="font-mono font-bold text-slate-700">
+                      Aroma {newBundling.scentName.trim()} - {newBundling.bottleSize}
+                      {newBundling.customSuffix?.trim() ? ` (${newBundling.customSuffix.trim()})` : ""}
+                    </p>
                   </div>
                 )}
 
-                <button
-                  type="submit"
-                  className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs py-2 rounded-xl transition-all cursor-pointer shadow"
-                >
-                  Buat Koleksi Paket
-                </button>
+                {editingBundling ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="submit"
+                      className="w-full bg-amber-600 hover:bg-amber-500 text-white font-extrabold text-xs py-2.5 rounded-xl transition-all cursor-pointer shadow"
+                    >
+                      Simpan Perubahan
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCancelEditBundling}
+                      className="w-full bg-slate-200 hover:bg-slate-300 text-slate-700 font-extrabold text-xs py-2.5 rounded-xl transition-all cursor-pointer"
+                    >
+                      Batal
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="submit"
+                    className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs py-2 rounded-xl transition-all cursor-pointer shadow"
+                  >
+                    Buat Koleksi Paket
+                  </button>
+                )}
               </form>
             </div>
           </div>

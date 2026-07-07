@@ -19,20 +19,28 @@ service cloud.firestore {
     function isAdmin() {
       return isAuthenticated() && (
         getUserEmail() == 'bastikacorp@gmail.com' ||
-        (exists(/databases/$(database)/documents/users/$(getUserEmail())) && 
+        getUserEmail() == 'adminbastika@gmail.com' ||
+        (getUserEmail() != '' && exists(/databases/$(database)/documents/users/$(getUserEmail())) && 
          get(/databases/$(database)/documents/users/$(getUserEmail())).data.role == 'admin')
       );
     }
 
     function isClient() {
-      return isAuthenticated() && (
+      return isAuthenticated() && getUserEmail() != '' && (
         exists(/databases/$(database)/documents/users/$(getUserEmail())) && 
         get(/databases/$(database)/documents/users/$(getUserEmail())).data.role == 'client'
       );
     }
 
+    function isReseller() {
+      return isAuthenticated() && getUserEmail() != '' && (
+        exists(/databases/$(database)/documents/users/$(getUserEmail())) && 
+        get(/databases/$(database)/documents/users/$(getUserEmail())).data.role == 'reseller'
+      );
+    }
+
     function isWhitelisted() {
-      return isAdmin() || isClient();
+      return isAdmin() || isClient() || isReseller();
     }
 
     // Whitelist / Users Collection
@@ -74,9 +82,9 @@ service cloud.firestore {
     // Transactions / Transaksi
     match /transactions/{txId} {
       allow read: if isWhitelisted();
-      // Client can only record SALES, not purchases or modifications
+      // Client or reseller can only record SALES, not purchases or modifications
       allow create: if isAdmin() || (
-        isClient() && 
+        (isClient() || isReseller()) && 
         request.resource.data.type == 'sale'
       );
       allow update, delete: if isAdmin();

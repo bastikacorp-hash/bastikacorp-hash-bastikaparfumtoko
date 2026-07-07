@@ -1639,24 +1639,11 @@ export default function App() {
     }
 
     const emailKey = (currentUser?.email || customEmail || "").trim().toLowerCase();
-    const bottleStock = getResellerStockQty(emailKey, "bottle", pkg.bottleSize);
-    const essenceStock = getResellerStockQty(emailKey, "essence", scentName);
-    const alcoholStock = getResellerStockQty(emailKey, "alcohol");
+    const pkgStock = resellerPackageStocks.find(s => s.resellerEmail === emailKey && s.packageId === packageId);
+    const availableQty = pkgStock ? pkgStock.quantity : 0;
 
-    const requiredBottles = quantity;
-    const requiredEssence = pkg.essenceMl * quantity;
-    const requiredAlcohol = pkg.alcoholMl * quantity;
-
-    if (bottleStock < requiredBottles) {
-      showToast(`Stok botol ${pkg.bottleSize} tidak mencukupi! Tersedia: ${bottleStock} pcs, Butuh: ${requiredBottles} pcs`, "error");
-      return;
-    }
-    if (essenceStock < requiredEssence) {
-      showToast(`Stok bibit aroma ${scentName} tidak mencukupi! Tersedia: ${essenceStock} ml, Butuh: ${requiredEssence} ml`, "error");
-      return;
-    }
-    if (alcoholStock < requiredAlcohol) {
-      showToast(`Stok absolut / pelarut tidak mencukupi! Tersedia: ${alcoholStock} ml, Butuh: ${requiredAlcohol} ml`, "error");
+    if (availableQty < quantity) {
+      showToast(`Stok fisik paket bundling tidak mencukupi! Tersedia: ${availableQty} unit, Butuh: ${quantity} unit`, "error");
       return;
     }
 
@@ -6565,6 +6552,16 @@ export default function App() {
                         );
                       })}
                     </div>
+                  ) : printTx.packageName ? (
+                    <div className="text-[8px] space-y-0.5">
+                      <div className="flex justify-between font-bold">
+                        <span>{printTx.packageName} ({printTx.bottleCount} unit)</span>
+                        <span>Rp {printTx.totalPrice.toLocaleString("id-ID")}</span>
+                      </div>
+                      <div className="flex justify-between text-[7px] text-slate-500 pl-2">
+                        <span>Paket Bundling Titipan</span>
+                      </div>
+                    </div>
                   ) : (
                     <>
                       {/* Scent Row */}
@@ -6607,6 +6604,8 @@ export default function App() {
                     <span>
                       Rp {(printTx.scentName === "Klaim Promo Potongan"
                         ? printTx.discountNominal
+                        : printTx.packageName
+                        ? printTx.totalPrice
                         : printTx.items && printTx.items.length > 0
                         ? printTx.items.reduce((acc, item) => {
                             const isHB = item.scentName === "Hanya Botol";
@@ -6797,6 +6796,16 @@ export default function App() {
                             );
                           })}
                         </div>
+                      ) : printTx.packageName ? (
+                        <div className="text-[7px] text-slate-800 space-y-0.5">
+                          <div className="flex justify-between font-semibold">
+                            <span>{printTx.packageName} ({printTx.bottleCount} unit)</span>
+                            <span>Rp {printTx.totalPrice.toLocaleString("id-ID")}</span>
+                          </div>
+                          <div className="flex justify-between text-[6px] text-slate-500 pl-1">
+                            <span>Paket Bundling Titipan</span>
+                          </div>
+                        </div>
                       ) : (
                         <>
                           <div className="text-[7px] text-slate-800 space-y-0.5">
@@ -6837,6 +6846,8 @@ export default function App() {
                         <span>
                           Rp {(printTx.scentName === "Klaim Promo Potongan"
                             ? printTx.discountNominal
+                            : printTx.packageName
+                            ? printTx.totalPrice
                             : printTx.items && printTx.items.length > 0
                             ? printTx.items.reduce((acc, item) => {
                                 const isHB = item.scentName === "Hanya Botol";

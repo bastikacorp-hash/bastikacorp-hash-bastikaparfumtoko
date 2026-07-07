@@ -1474,7 +1474,7 @@ export async function sendBundlingPackageToReseller(
   const resellerPkgStockId = `${safeEmail}_${packageId}`;
 
   await runTransaction(db, async (transaction) => {
-    // 1. Get bundling package details
+    // 1. Get bundling package details (Read 1)
     const pkgRef = doc(db, "bundling_packages", packageId);
     const pkgSnap = await transaction.get(pkgRef);
     if (!pkgSnap.exists()) {
@@ -1493,11 +1493,13 @@ export async function sendBundlingPackageToReseller(
     const essenceRef = doc(db, "stocks", essenceStockId);
     const bottleRef = doc(db, "stocks", bottleStockId);
     const alcoholRef = doc(db, "stocks", alcoholStockId);
+    const resellerPkgStockRef = doc(db, "reseller_package_stocks", resellerPkgStockId);
 
-    // 3. Fetch master stock documents
+    // 3. Fetch all other master and reseller stock documents (Read 2, 3, 4, 5)
     const essenceSnap = await transaction.get(essenceRef);
     const bottleSnap = await transaction.get(bottleRef);
     const alcoholSnap = await transaction.get(alcoholRef);
+    const resellerPkgStockSnap = await transaction.get(resellerPkgStockRef);
 
     // 4. Calculate total requirements
     const totalEssenceRequired = pkg.essenceMl * quantity;
@@ -1520,15 +1522,14 @@ export async function sendBundlingPackageToReseller(
       throw new Error(`Stok utama cairan pelarut (Absolut) tidak mencukupi! Tersedia: ${currentAlcohol} ml, Butuh: ${totalAlcoholRequired} ml`);
     }
 
+    // === ALL READS COMPLETED. NOW DO ALL WRITES ===
+
     // 6. Perform master stock deductions
     transaction.update(essenceRef, { quantity: essenceSnap.data().quantity - totalEssenceRequired });
     transaction.update(bottleRef, { quantity: bottleSnap.data().quantity - totalBottleRequired });
     transaction.update(alcoholRef, { quantity: alcoholSnap.data().quantity - totalAlcoholRequired });
 
     // 7. Increment Reseller Package Stock
-    const resellerPkgStockRef = doc(db, "reseller_package_stocks", resellerPkgStockId);
-    const resellerPkgStockSnap = await transaction.get(resellerPkgStockRef);
-
     if (resellerPkgStockSnap.exists()) {
       const currentQty = resellerPkgStockSnap.data().quantity || 0;
       transaction.update(resellerPkgStockRef, { quantity: currentQty + quantity });

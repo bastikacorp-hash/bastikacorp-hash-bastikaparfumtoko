@@ -152,15 +152,41 @@ export default function App() {
   const [bundlingPackages, setBundlingPackages] = useState<BundlingPackage[]>([]);
   const [showAddBundling, setShowAddBundling] = useState(false);
   const [editingBundling, setEditingBundling] = useState<BundlingPackage | null>(null);
+  const [lastFormula, setLastFormula] = useState(() => {
+    try {
+      const saved = localStorage.getItem("last_bundling_formula");
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch (e) {}
+    return {
+      bottleSize: "30ml",
+      essenceMl: 10,
+      alcoholMl: 20,
+      price: 35000
+    };
+  });
+
   const [newBundling, setNewBundling] = useState({
     packageName: "",
     scentName: "",
-    bottleSize: "30ml",
+    bottleSize: "30ml", // We'll set this using useEffect or keep the default
     essenceMl: 10,
     alcoholMl: 20,
     price: 35000,
     customSuffix: ""
   });
+
+  // Sync newBundling initial state with lastFormula on mount
+  useEffect(() => {
+    setNewBundling(prev => ({
+      ...prev,
+      bottleSize: lastFormula.bottleSize,
+      essenceMl: lastFormula.essenceMl,
+      alcoholMl: lastFormula.alcoholMl,
+      price: lastFormula.price
+    }));
+  }, [lastFormula]);
   const [showTransferStock, setShowTransferStock] = useState(false);
   const [transferForm, setTransferForm] = useState({
     resellerEmail: "",
@@ -239,6 +265,7 @@ export default function App() {
   // Input forms state
   const [newShelf, setNewShelf] = useState({ rackNumber: "", scentName: "", pricePerMl: 3500 });
   const [editingPrice, setEditingPrice] = useState<{ scentName: string; pricePerMl: number } | null>(null);
+  const [editingShelf, setEditingShelf] = useState<{ id: string; rackNumber: string } | null>(null);
   
   // Sales cashier state
   const [saleScent, setSaleScent] = useState("");
@@ -768,6 +795,21 @@ export default function App() {
       setEditingPrice(null);
     } catch (err: any) {
       showToast(err.message, "error");
+    }
+  };
+
+  const handleSaveShelfRackNumber = async () => {
+    if (!editingShelf) return;
+    if (!editingShelf.rackNumber.trim()) {
+      showToast("Nomor rak tidak boleh kosong!", "error");
+      return;
+    }
+    try {
+      await updateShelf(editingShelf.id, { rackNumber: editingShelf.rackNumber.trim() });
+      showToast(`Nomor rak berhasil diubah menjadi "${editingShelf.rackNumber.trim()}"!`, "success");
+      setEditingShelf(null);
+    } catch (err: any) {
+      showToast(err.message || "Gagal mengubah nomor rak", "error");
     }
   };
 
@@ -1857,13 +1899,24 @@ export default function App() {
         });
         showToast(`Formula paket bundling "${autoPackageName}" berhasil ditambahkan!`, "success");
       }
+      const updatedFormula = {
+        bottleSize,
+        essenceMl,
+        alcoholMl: calculatedAlcoholMl,
+        price
+      };
+      setLastFormula(updatedFormula);
+      try {
+        localStorage.setItem("last_bundling_formula", JSON.stringify(updatedFormula));
+      } catch (e) {}
+
       setNewBundling({
         packageName: "",
         scentName: "",
-        bottleSize: "30ml",
-        essenceMl: 10,
-        alcoholMl: 20,
-        price: 35000,
+        bottleSize,
+        essenceMl,
+        alcoholMl: calculatedAlcoholMl,
+        price,
         customSuffix: ""
       });
       setShowAddBundling(false);
@@ -1897,10 +1950,10 @@ export default function App() {
     setNewBundling({
       packageName: "",
       scentName: "",
-      bottleSize: "30ml",
-      essenceMl: 10,
-      alcoholMl: 20,
-      price: 35000,
+      bottleSize: lastFormula.bottleSize,
+      essenceMl: lastFormula.essenceMl,
+      alcoholMl: lastFormula.alcoholMl,
+      price: lastFormula.price,
       customSuffix: ""
     });
     setShowAddBundling(false);
@@ -3612,7 +3665,49 @@ export default function App() {
                       <tbody className="divide-y divide-slate-100">
                         {filteredShelves.map((s) => (
                           <tr key={s.id} className="hover:bg-slate-50/50 transition-colors">
-                            <td className="py-3 px-4 font-bold text-slate-900">{s.rackNumber}</td>
+                            <td className="py-3 px-4 font-bold text-slate-900">
+                              {editingShelf?.id === s.id ? (
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    type="text"
+                                    value={editingShelf.rackNumber}
+                                    onChange={(e) => setEditingShelf({ ...editingShelf, rackNumber: e.target.value })}
+                                    className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-800 font-bold focus:outline-none focus:ring-1 focus:ring-emerald-500 w-24"
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") handleSaveShelfRackNumber();
+                                      if (e.key === "Escape") setEditingShelf(null);
+                                    }}
+                                  />
+                                  <button
+                                    onClick={handleSaveShelfRackNumber}
+                                    className="p-1 text-emerald-600 hover:bg-emerald-50 rounded transition-colors cursor-pointer"
+                                    title="Simpan"
+                                  >
+                                    <Check className="h-3.5 w-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => setEditingShelf(null)}
+                                    className="p-1 text-slate-400 hover:bg-slate-100 rounded transition-colors cursor-pointer"
+                                    title="Batal"
+                                  >
+                                    <X className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-1.5 group">
+                                  <span>{s.rackNumber}</span>
+                                  {userRole === "admin" && (
+                                    <button
+                                      onClick={() => setEditingShelf({ id: s.id, rackNumber: s.rackNumber })}
+                                      className="text-slate-400 hover:text-emerald-600 p-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                                      title="Edit Nomor Rak"
+                                    >
+                                      <Edit3 className="h-3.5 w-3.5" />
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </td>
                             <td className="py-3 px-4 font-medium text-slate-800 flex items-center gap-2">
                               {s.scentName}
                               {userRole === "admin" && (

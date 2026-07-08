@@ -240,8 +240,15 @@ export default function App() {
 
   // State for adding new custom bottle size
   const [newBottleSize, setNewBottleSize] = useState("");
-  const [newBottlePrice, setNewBottlePrice] = useState<number>(0);
+  const [newBottlePriceKaca, setNewBottlePriceKaca] = useState<number>(0);
+  const [newBottlePricePlastik, setNewBottlePricePlastik] = useState<number>(0);
+  const [newBottlePurchasePriceKaca, setNewBottlePurchasePriceKaca] = useState<number>(0);
+  const [newBottlePurchasePricePlastik, setNewBottlePurchasePricePlastik] = useState<number>(0);
   const [showAddBottleSize, setShowAddBottleSize] = useState(false);
+
+  // Material type selection states
+  const [saleBottleType, setSaleBottleType] = useState<"Kaca" | "Plastik">("Kaca");
+  const [purchaseBottleType, setPurchaseBottleType] = useState<"Kaca" | "Plastik">("Kaca");
 
   // Navigation / UI State
   const [activeTab, setActiveTab] = useState<string>("dashboard"); // 'dashboard', 'shelves', 'stocks', 'sales', 'purchases', 'accounting', 'users', 'history'
@@ -580,7 +587,9 @@ export default function App() {
         if (item.bottleSize !== "None") {
           const matchedBottle = bottleSizes.find(b => b.size === item.bottleSize);
           if (matchedBottle) {
-            bottleFee = matchedBottle.price;
+            bottleFee = item.bottleType === "Plastik"
+              ? (matchedBottle.pricePlastik ?? Math.round((matchedBottle.price ?? 10000) / 2))
+              : (matchedBottle.priceKaca ?? matchedBottle.price ?? 10000);
           }
         }
         if (item.noBottleStockDeduct || saleDiscountType === "free_bottle") {
@@ -597,7 +606,9 @@ export default function App() {
       if (saleBottleSize !== "None") {
         const matchedBottle = bottleSizes.find(b => b.size === saleBottleSize);
         if (matchedBottle) {
-          bottleFee = matchedBottle.price;
+          bottleFee = saleBottleType === "Plastik"
+            ? (matchedBottle.pricePlastik ?? Math.round((matchedBottle.price ?? 10000) / 2))
+            : (matchedBottle.priceKaca ?? matchedBottle.price ?? 10000);
         }
       }
       if (saleDiscountType === "free_bottle" || saleNoBottle) {
@@ -845,6 +856,7 @@ export default function App() {
         scentName: saleScent,
         volumeMl: isHanyaBotol ? 0 : saleVolume,
         bottleSize: saleBottleSize,
+        bottleType: saleBottleSize !== "None" ? saleBottleType : undefined,
         bottleCount: saleBottleCount,
         noBottleStockDeduct: saleNoBottle
       });
@@ -861,7 +873,10 @@ export default function App() {
         if (item.bottleSize !== "None" && !item.noBottleStockDeduct) {
           const matchedBottle = bottleSizes.find(b => b.size === item.bottleSize);
           if (matchedBottle) {
-            return acc + (matchedBottle.price * item.bottleCount);
+            const bottlePrice = item.bottleType === "Plastik"
+              ? (matchedBottle.pricePlastik ?? Math.round((matchedBottle.price ?? 10000) / 2))
+              : (matchedBottle.priceKaca ?? matchedBottle.price ?? 10000);
+            return acc + (bottlePrice * item.bottleCount);
           }
         }
         return acc;
@@ -874,16 +889,17 @@ export default function App() {
     const representativeScent = isMulti ? `Multi-item (${finalItems.length} aroma)` : firstItem.scentName;
     const representativeVolume = finalItems.reduce((acc, it) => acc + (it.volumeMl || 0), 0);
     const representativeBottleSize = isMulti ? "Multi-size" : firstItem.bottleSize;
+    const representativeBottleType = isMulti ? undefined : firstItem.bottleType;
     const representativeBottleCount = finalItems.reduce((acc, it) => acc + (it.bottleCount || 0), 0);
     const representativeNoBottle = finalItems.some(it => it.noBottleStockDeduct);
 
     const itemsDescription = finalItems.map(item => {
       const isHBotol = item.scentName === "Hanya Botol";
       const bSizeStr = item.bottleSize !== "None" 
-        ? (item.noBottleStockDeduct ? ` + Bawa Botol Sendiri ${item.bottleSize}` : ` + Botol ${item.bottleSize}`)
+        ? (item.noBottleStockDeduct ? ` + Bawa Botol Sendiri ${item.bottleSize}` : ` + Botol ${item.bottleType || "Kaca"} ${item.bottleSize}`)
         : " (Hanya Bibit)";
       return isHBotol 
-        ? `Botol ${item.bottleSize} x ${item.bottleCount}` 
+        ? `Botol ${item.bottleType || "Kaca"} ${item.bottleSize} x ${item.bottleCount}` 
         : `${item.scentName} (${item.volumeMl}ml)${bSizeStr} x ${item.bottleCount}`;
     }).join(", ");
 
@@ -897,6 +913,7 @@ export default function App() {
         scentName: representativeScent,
         volumeMl: representativeVolume,
         bottleSize: representativeBottleSize,
+        bottleType: representativeBottleType,
         bottleCount: representativeBottleCount,
         totalPrice: saleTotalPrice,
         discountType: saleDiscountType,
@@ -917,6 +934,7 @@ export default function App() {
         scentName: representativeScent,
         volumeMl: representativeVolume,
         bottleSize: representativeBottleSize,
+        bottleType: representativeBottleType,
         bottleCount: representativeBottleCount,
         totalPrice: saleTotalPrice,
         discountType: saleDiscountType,
@@ -982,9 +1000,10 @@ export default function App() {
         scentName: purchaseCategory === "bibit" ? finalScent : (purchaseCategory === "alkohol" ? (purchaseScent || "Absolut Cair") : undefined),
         volumeMl: (purchaseCategory === "bibit" || purchaseCategory === "alkohol") ? purchaseVolume : undefined,
         bottleSize: purchaseCategory === "botol" ? purchaseBottleSize : "None",
+        bottleType: purchaseCategory === "botol" ? purchaseBottleType : undefined,
         bottleCount: purchaseCategory === "botol" ? purchaseCount : undefined,
         totalPrice: calculatedTotal,
-        description: purchaseDesc || `Pembelian stok ${purchaseCategory === 'bibit' ? `bibit ${finalScent}` : purchaseCategory === 'botol' ? `botol ${purchaseBottleSize}` : purchaseCategory === 'alkohol' ? (purchaseScent || 'Absolut Cair') : 'lainnya'}`,
+        description: purchaseDesc || `Pembelian stok ${purchaseCategory === 'bibit' ? `bibit ${finalScent}` : purchaseCategory === 'botol' ? `botol ${purchaseBottleType || "Kaca"} ${purchaseBottleSize}` : purchaseCategory === 'alkohol' ? (purchaseScent || 'Absolut Cair') : 'lainnya'}`,
         operatorEmail: opEmail
       });
 
@@ -1006,17 +1025,30 @@ export default function App() {
       showToast("Nama ukuran botol tidak boleh kosong!", "error");
       return;
     }
-    if (newBottlePrice <= 0) {
-      showToast("Harga/biaya botol harus lebih besar dari 0!", "error");
+    if (newBottlePriceKaca <= 0 || newBottlePricePlastik <= 0) {
+      showToast("Harga jual botol harus lebih besar dari 0!", "error");
+      return;
+    }
+    if (newBottlePurchasePriceKaca <= 0 || newBottlePurchasePricePlastik <= 0) {
+      showToast("Harga belanja botol harus lebih besar dari 0!", "error");
       return;
     }
     try {
       const cleanSize = newBottleSize.trim();
-      await addBottleSize(cleanSize, newBottlePrice);
+      await addBottleSize(
+        cleanSize,
+        newBottlePriceKaca,
+        newBottlePricePlastik,
+        newBottlePurchasePriceKaca,
+        newBottlePurchasePricePlastik
+      );
       setPurchaseBottleSize(cleanSize);
       setShowAddBottleSize(false);
       setNewBottleSize("");
-      setNewBottlePrice(0);
+      setNewBottlePriceKaca(0);
+      setNewBottlePricePlastik(0);
+      setNewBottlePurchasePriceKaca(0);
+      setNewBottlePurchasePricePlastik(0);
       showToast(`Ukuran botol ${cleanSize} berhasil ditambahkan!`, "success");
     } catch (error: any) {
       console.error(error);
@@ -3417,7 +3449,7 @@ export default function App() {
                         <div key={s.id} className="flex justify-between items-center bg-amber-50 border border-amber-100 rounded-xl p-3 text-xs">
                           <div>
                             <span className="font-bold text-amber-900">
-                              {s.type === "essence" ? `Bibit ${s.scentName}` : s.type === "bottle" ? `Botol ${s.size}` : "Absolut"}
+                              {s.type === "essence" ? `Bibit ${s.scentName}` : s.type === "bottle" ? `Botol ${s.bottleType || "Kaca"} ${s.size}` : "Absolut"}
                             </span>
                             <p className="text-[10px] text-amber-700">Perlu re-stock segera!</p>
                           </div>
@@ -3908,7 +3940,9 @@ export default function App() {
                           {stocks.filter(s => s.type === "bottle" || s.type === "alcohol").map((s) => (
                             <tr key={s.id} className="hover:bg-slate-50/50 transition-colors">
                               <td className="py-3 px-4 font-bold text-slate-800">
-                                {s.type === "alcohol" ? (s.scentName || (s.id === "alcohol_gel" ? "Absolut Gel" : "Absolut Cair")) : `Botol Parfum Ukuran ${s.size}`}
+                                {s.type === "alcohol" 
+                                  ? (s.scentName || (s.id === "alcohol_gel" ? "Absolut Gel" : "Absolut Cair")) 
+                                  : `Botol Parfum ${s.bottleType || "Kaca"} Ukuran ${s.size}`}
                               </td>
                               <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">
                                 <span className={`px-2 py-1 rounded-md ${
@@ -4100,7 +4134,7 @@ export default function App() {
                       >
                         {bottleSizes.map((b) => (
                           <option key={b.id} value={b.size}>
-                            Botol {b.size} ({formatRupiah(b.price)})
+                            Botol {b.size}
                           </option>
                         ))}
                         <option value="None">Hanya Bibit</option>
@@ -4120,6 +4154,37 @@ export default function App() {
                         className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
                       />
                     </div>
+
+                    {/* Bottle material selection */}
+                    {saleBottleSize !== "None" && (
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Bahan Botol</label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setSaleBottleType("Kaca")}
+                            className={`py-2 px-4 rounded-xl text-xs font-bold border transition-all cursor-pointer text-center ${
+                              saleBottleType === "Kaca"
+                                ? "bg-emerald-600 border-emerald-600 text-white shadow-sm"
+                                : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                            }`}
+                          >
+                            Botol Kaca ({formatRupiah(bottleSizes.find(b => b.size === saleBottleSize)?.priceKaca ?? bottleSizes.find(b => b.size === saleBottleSize)?.price ?? 0)})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSaleBottleType("Plastik")}
+                            className={`py-2 px-4 rounded-xl text-xs font-bold border transition-all cursor-pointer text-center ${
+                              saleBottleType === "Plastik"
+                                ? "bg-emerald-600 border-emerald-600 text-white shadow-sm"
+                                : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                            }`}
+                          >
+                            Botol Plastik ({formatRupiah(bottleSizes.find(b => b.size === saleBottleSize)?.pricePlastik ?? Math.round((bottleSizes.find(b => b.size === saleBottleSize)?.price ?? 0) / 2))})
+                          </button>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Checkbox Bawa Botol Sendiri */}
                     {saleScent !== "Hanya Botol" && (
@@ -4178,6 +4243,7 @@ export default function App() {
                           scentName: saleScent,
                           volumeMl: isHanyaBotol ? 0 : saleVolume,
                           bottleSize: saleBottleSize,
+                          bottleType: saleBottleSize !== "None" ? saleBottleType : undefined,
                           bottleCount: saleBottleCount,
                           noBottleStockDeduct: saleNoBottle
                         };
@@ -4728,14 +4794,14 @@ export default function App() {
                                   {t.items.map((it, idx) => (
                                     <div key={it.id || idx} className="text-xs text-slate-500">
                                       {it.bottleSize !== "None" 
-                                        ? `${it.noBottleStockDeduct ? "Bawa" : "Botol"} ${it.bottleSize} (${it.bottleCount}x)` 
+                                        ? `${it.noBottleStockDeduct ? "Bawa" : `Botol ${it.bottleType || "Kaca"}`} ${it.bottleSize} (${it.bottleCount}x)` 
                                         : "Hanya Bibit"
                                       }
                                     </div>
                                   ))}
                                 </div>
                               ) : (
-                                t.bottleSize !== "None" ? `Botol ${t.bottleSize} (${t.bottleCount}x)` : "Hanya Bibit"
+                                t.bottleSize !== "None" ? `Botol ${t.bottleType || "Kaca"} ${t.bottleSize} (${t.bottleCount}x)` : "Hanya Bibit"
                               )}
                             </td>
                             <td className="py-2.5 px-4 font-mono font-bold text-emerald-700">
@@ -4878,34 +4944,86 @@ export default function App() {
                     )}
 
                     {purchaseCategory === "botol" && (
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Ukuran Botol Kosong</label>
-                        <div className="flex gap-2">
-                          <select
-                            id="purchase-bottle-select"
-                            value={purchaseBottleSize}
-                            onChange={(e) => setPurchaseBottleSize(e.target.value)}
-                            className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
-                          >
-                            {bottleSizes.map((b) => (
-                              <option key={b.id} value={b.size}>Botol {b.size}</option>
-                            ))}
-                          </select>
-                          <button
-                            type="button"
-                            onClick={() => setShowAddBottleSize(!showAddBottleSize)}
-                            className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl px-3 text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer"
-                            title="Tambah Ukuran Botol Baru"
-                          >
-                            <Plus className="h-4 w-4" />
-                            <span className="hidden sm:inline">Ukuran Baru</span>
-                          </button>
+                      <div className="space-y-3 sm:col-span-2">
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Ukuran Botol Kosong</label>
+                          <div className="flex gap-2">
+                            <select
+                              id="purchase-bottle-select"
+                              value={purchaseBottleSize}
+                              onChange={(e) => {
+                                setPurchaseBottleSize(e.target.value);
+                                const matchedB = bottleSizes.find(b => b.size === e.target.value);
+                                if (matchedB && purchaseCount > 0) {
+                                  const unitCost = purchaseBottleType === "Plastik"
+                                    ? (matchedB.purchasePricePlastik ?? 3000)
+                                    : (matchedB.purchasePriceKaca ?? 5000);
+                                  setPurchasePrice(unitCost * purchaseCount);
+                                }
+                              }}
+                              className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800"
+                            >
+                              {bottleSizes.map((b) => (
+                                <option key={b.id} value={b.size}>Botol {b.size}</option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              onClick={() => setShowAddBottleSize(!showAddBottleSize)}
+                              className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl px-3 text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer"
+                              title="Tambah Ukuran Botol Baru"
+                            >
+                              <Plus className="h-4 w-4" />
+                              <span className="hidden sm:inline">Ukuran Baru</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Bahan Botol Belanja</label>
+                          <div className="grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPurchaseBottleType("Kaca");
+                                const matchedB = bottleSizes.find(b => b.size === purchaseBottleSize);
+                                if (matchedB && purchaseCount > 0) {
+                                  setPurchasePrice((matchedB.purchasePriceKaca ?? 5000) * purchaseCount);
+                                }
+                              }}
+                              className={`py-2 px-4 rounded-xl text-xs font-bold border transition-all cursor-pointer text-center ${
+                                purchaseBottleType === "Kaca"
+                                  ? "bg-emerald-600 border-emerald-600 text-white shadow-sm"
+                                  : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                              }`}
+                            >
+                              Botol Kaca
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPurchaseBottleType("Plastik");
+                                const matchedB = bottleSizes.find(b => b.size === purchaseBottleSize);
+                                if (matchedB && purchaseCount > 0) {
+                                  setPurchasePrice((matchedB.purchasePricePlastik ?? 3000) * purchaseCount);
+                                }
+                              }}
+                              className={`py-2 px-4 rounded-xl text-xs font-bold border transition-all cursor-pointer text-center ${
+                                purchaseBottleType === "Plastik"
+                                  ? "bg-emerald-600 border-emerald-600 text-white shadow-sm"
+                                  : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                              }`}
+                            >
+                              Botol Plastik
+                            </button>
+                          </div>
                         </div>
 
                         {showAddBottleSize && (
-                          <div className="mt-3 bg-emerald-50/50 border border-emerald-100 rounded-xl p-3 space-y-3">
+                          <div className="mt-3 bg-emerald-50/50 border border-emerald-100 rounded-xl p-4 space-y-3">
                             <span className="block text-[10px] font-bold text-emerald-800 uppercase tracking-wider">Tambah Ukuran Botol Baru</span>
-                            <div className="grid grid-cols-2 gap-2">
+                            
+                            <div className="grid grid-cols-1 gap-3">
                               <div>
                                 <label className="block text-[10px] text-slate-400 mb-0.5 font-semibold">Nama Ukuran</label>
                                 <input
@@ -4916,22 +5034,59 @@ export default function App() {
                                   className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500"
                                 />
                               </div>
-                              <div>
-                                <label className="block text-[10px] text-slate-400 mb-0.5 font-semibold">Harga Jual Botol (Rp)</label>
-                                <input
-                                  type="number"
-                                  placeholder="Contoh: 18000"
-                                  value={newBottlePrice || ""}
-                                  onChange={(e) => setNewBottlePrice(Number(e.target.value))}
-                                  className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                                />
+                              
+                              <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                  <label className="block text-[10px] text-slate-400 mb-0.5 font-semibold">Harga Jual Kaca (Rp)</label>
+                                  <input
+                                    type="number"
+                                    placeholder="Contoh: 18000"
+                                    value={newBottlePriceKaca || ""}
+                                    onChange={(e) => setNewBottlePriceKaca(Number(e.target.value))}
+                                    className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-[10px] text-slate-400 mb-0.5 font-semibold">Harga Jual Plastik (Rp)</label>
+                                  <input
+                                    type="number"
+                                    placeholder="Contoh: 12000"
+                                    value={newBottlePricePlastik || ""}
+                                    onChange={(e) => setNewBottlePricePlastik(Number(e.target.value))}
+                                    className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                  <label className="block text-[10px] text-slate-400 mb-0.5 font-semibold">Harga Belanja Kaca (Rp)</label>
+                                  <input
+                                    type="number"
+                                    placeholder="Contoh: 8000"
+                                    value={newBottlePurchasePriceKaca || ""}
+                                    onChange={(e) => setNewBottlePurchasePriceKaca(Number(e.target.value))}
+                                    className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-[10px] text-slate-400 mb-0.5 font-semibold">Harga Belanja Plastik (Rp)</label>
+                                  <input
+                                    type="number"
+                                    placeholder="Contoh: 5000"
+                                    value={newBottlePurchasePricePlastik || ""}
+                                    onChange={(e) => setNewBottlePurchasePricePlastik(Number(e.target.value))}
+                                    className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                                  />
+                                </div>
                               </div>
                             </div>
-                            <div className="flex gap-2 justify-end">
+
+                            <div className="flex gap-2 justify-end pt-1">
                               <button
                                 type="button"
                                 onClick={handleAddNewBottleSize}
-                                className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-1 px-3 rounded-lg text-[11px] transition-colors cursor-pointer"
+                                className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-1.5 px-3 rounded-lg text-[11px] transition-colors cursor-pointer"
                               >
                                 Tambah
                               </button>
@@ -4940,9 +5095,12 @@ export default function App() {
                                 onClick={() => {
                                   setShowAddBottleSize(false);
                                   setNewBottleSize("");
-                                  setNewBottlePrice(0);
+                                  setNewBottlePriceKaca(0);
+                                  setNewBottlePricePlastik(0);
+                                  setNewBottlePurchasePriceKaca(0);
+                                  setNewBottlePurchasePricePlastik(0);
                                 }}
-                                className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-1 px-3 rounded-lg text-[11px] transition-colors cursor-pointer"
+                                className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-1.5 px-3 rounded-lg text-[11px] transition-colors cursor-pointer"
                               >
                                 Batal
                               </button>
@@ -6845,7 +7003,11 @@ export default function App() {
                         let bPrice = 0;
                         if (item.bottleSize !== "None") {
                           const mBot = bottleSizes.find(b => b.size === item.bottleSize);
-                          if (mBot) bPrice = mBot.price;
+                          if (mBot) {
+                            bPrice = item.bottleType === "Plastik"
+                              ? (mBot.pricePlastik ?? Math.round((mBot.price ?? 10000) / 2))
+                              : (mBot.priceKaca ?? mBot.price ?? 10000);
+                          }
                         }
                         if (item.noBottleStockDeduct || printTx.discountType === "free_bottle") {
                           bPrice = 0;
@@ -6873,7 +7035,7 @@ export default function App() {
                                 <span className="text-slate-600">
                                   {item.noBottleStockDeduct 
                                     ? `Botol ${item.bottleSize} (${item.bottleCount} pcs) - Bawa Sendiri`
-                                    : `Botol ${item.bottleSize} (${item.bottleCount} pcs)`
+                                    : `Botol ${item.bottleType || "Kaca"} ${item.bottleSize} (${item.bottleCount} pcs)`
                                   }
                                 </span>
                                 <span>
@@ -6916,13 +7078,17 @@ export default function App() {
                           <span>
                             {printTx.noBottleStockDeduct 
                               ? `Botol ${printTx.bottleSize} (${printTx.bottleCount} pcs) - Bawa Sendiri`
-                              : `Botol ${printTx.bottleSize} (${printTx.bottleCount} pcs)`
+                              : `Botol ${printTx.bottleType || "Kaca"} ${printTx.bottleSize} (${printTx.bottleCount} pcs)`
                             }
                           </span>
                           <span>
                             {printTx.noBottleStockDeduct
                               ? "Rp 0"
-                              : `Rp ${((bottleSizes.find(b => b.size === printTx.bottleSize)?.price || 0) * (printTx.bottleCount || 1)).toLocaleString("id-ID")}`
+                              : (() => {
+                                  const mBot = bottleSizes.find(b => b.size === printTx.bottleSize);
+                                  const bPrice = mBot ? (printTx.bottleType === "Plastik" ? (mBot.pricePlastik ?? Math.round((mBot.price ?? 10000) / 2)) : (mBot.priceKaca ?? mBot.price ?? 10000)) : 0;
+                                  return `Rp ${(bPrice * (printTx.bottleCount || 1)).toLocaleString("id-ID")}`;
+                                })()
                             }
                           </span>
                         </div>
@@ -7089,7 +7255,11 @@ export default function App() {
                             let bPrice = 0;
                             if (item.bottleSize !== "None") {
                               const mBot = bottleSizes.find(b => b.size === item.bottleSize);
-                              if (mBot) bPrice = mBot.price;
+                              if (mBot) {
+                                bPrice = item.bottleType === "Plastik"
+                                  ? (mBot.pricePlastik ?? Math.round((mBot.price ?? 10000) / 2))
+                                  : (mBot.priceKaca ?? mBot.price ?? 10000);
+                              }
                             }
                             if (item.noBottleStockDeduct || printTx.discountType === "free_bottle") {
                               bPrice = 0;
@@ -7117,7 +7287,7 @@ export default function App() {
                                     <span className="text-slate-600">
                                       {item.noBottleStockDeduct 
                                         ? `Botol ${item.bottleSize} (${item.bottleCount} pcs) - Bawa Sendiri`
-                                        : `Botol ${item.bottleSize} (${item.bottleCount} pcs)`
+                                        : `Botol ${item.bottleType || "Kaca"} ${item.bottleSize} (${item.bottleCount} pcs)`
                                       }
                                     </span>
                                     <span>
@@ -7158,13 +7328,17 @@ export default function App() {
                               <span>
                                 {printTx.noBottleStockDeduct 
                                   ? `Botol ${printTx.bottleSize} (${printTx.bottleCount} pcs) - Bawa Sendiri`
-                                  : `Botol ${printTx.bottleSize} (${printTx.bottleCount} pcs)`
+                                  : `Botol ${printTx.bottleType || "Kaca"} ${printTx.bottleSize} (${printTx.bottleCount} pcs)`
                                 }
                               </span>
                               <span>
                                 {printTx.noBottleStockDeduct
                                   ? "Rp 0"
-                                  : `Rp ${((bottleSizes.find(b => b.size === printTx.bottleSize)?.price || 0) * (printTx.bottleCount || 1)).toLocaleString("id-ID")}`
+                                  : (() => {
+                                      const mBot = bottleSizes.find(b => b.size === printTx.bottleSize);
+                                      const bPrice = mBot ? (printTx.bottleType === "Plastik" ? (mBot.pricePlastik ?? Math.round((mBot.price ?? 10000) / 2)) : (mBot.priceKaca ?? mBot.price ?? 10000)) : 0;
+                                      return `Rp ${(bPrice * (printTx.bottleCount || 1)).toLocaleString("id-ID")}`;
+                                    })()
                                 }
                               </span>
                             </div>

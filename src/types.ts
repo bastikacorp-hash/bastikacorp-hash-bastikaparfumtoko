@@ -26,6 +26,7 @@ export interface StockItem {
   type: "essence" | "alcohol" | "bottle";
   scentName?: string;
   size?: string; // For bottles (e.g. "30ml", "50ml", "100ml")
+  bottleType?: "Kaca" | "Plastik";
   quantity: number; // in ml or units
 }
 
@@ -34,6 +35,7 @@ export interface SaleItem {
   scentName: string;
   volumeMl: number;
   bottleSize: string; // "None" (Hanya Bibit) or size (e.g. "30ml", "50ml", "100ml")
+  bottleType?: "Kaca" | "Plastik";
   bottleCount: number;
   noBottleStockDeduct?: boolean;
 }
@@ -47,6 +49,7 @@ export interface Transaction {
   scentName?: string; // If bibit/essence is selected
   volumeMl?: number; // Volume of bibit
   bottleSize?: string; // "None" or size (e.g. "30ml", "50ml", "100ml")
+  bottleType?: "Kaca" | "Plastik";
   bottleCount?: number; // Quantity of bottles
   totalPrice: number;
   discountType?: "none" | "free_bottle" | "nominal";
@@ -86,7 +89,11 @@ export interface CashMutation {
 export interface BottleSize {
   id: string;
   size: string;
-  price: number;
+  price: number; // legacy/fallback
+  priceKaca?: number;
+  pricePlastik?: number;
+  purchasePriceKaca?: number;
+  purchasePricePlastik?: number;
   addedAt: string;
 }
 

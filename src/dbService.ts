@@ -362,11 +362,11 @@ export async function addTransaction(rawTx: Omit<Transaction, "id">) {
     const bottleSize = tx.bottleSize || "None";
     const bottleCount = tx.bottleCount || 0;
     if (tx.type === "sale" && bottleSize !== "None" && bottleCount > 0) {
-      const bottleId = `bottle_${bottleSize}`;
+      const bottleId = `bottle_${bottleSize}_${tx.bottleType === "Plastik" ? "plastik" : "kaca"}`;
       bottleRef = doc(db, "stocks", bottleId);
       bottleSnap = await transaction.get(bottleRef);
     } else if (tx.type === "purchase" && tx.category === "botol" && bottleSize !== "None" && bottleCount > 0) {
-      const bottleId = `bottle_${bottleSize}`;
+      const bottleId = `bottle_${bottleSize}_${tx.bottleType === "Plastik" ? "plastik" : "kaca"}`;
       bottleRef = doc(db, "stocks", bottleId);
       bottleSnap = await transaction.get(bottleRef);
     }
@@ -402,7 +402,7 @@ export async function addTransaction(rawTx: Omit<Transaction, "id">) {
           }
         }
         if (item.bottleSize && item.bottleSize !== "None" && (item.bottleCount || 0) > 0) {
-          const bottleId = `bottle_${item.bottleSize}`;
+          const bottleId = `bottle_${item.bottleSize}_${item.bottleType === "Plastik" ? "plastik" : "kaca"}`;
           if (!bottleRefsMap[bottleId]) {
             const ref = doc(db, "stocks", bottleId);
             bottleRefsMap[bottleId] = ref;
@@ -475,10 +475,10 @@ export async function addTransaction(rawTx: Omit<Transaction, "id">) {
 
           // C. Bottle Stock Deduction
           if (!item.noBottleStockDeduct && bSize !== "None" && bottleCountToDeduct > 0) {
-            const bottleId = `bottle_${bSize}`;
+            const bottleId = `bottle_${bSize}_${item.bottleType === "Plastik" ? "plastik" : "kaca"}`;
             const currentQty = localBottleStock[bottleId] ?? 0;
             if (currentQty < bottleCountToDeduct) {
-              throw new Error(`Stok botol ukuran ${bSize} tidak mencukupi! Tersisa: ${currentQty} unit.`);
+              throw new Error(`Stok botol ${item.bottleType || "Kaca"} ukuran ${bSize} tidak mencukupi! Tersisa: ${currentQty} unit.`);
             }
             const updatedQty = currentQty - bottleCountToDeduct;
             localBottleStock[bottleId] = updatedQty;
@@ -543,11 +543,11 @@ export async function addTransaction(rawTx: Omit<Transaction, "id">) {
           if (bottleSnap.exists()) {
             const currentQty = bottleSnap.data().quantity;
             if (currentQty < bottleCountToDeduct) {
-              throw new Error(`Stok botol ukuran ${bottleSize} tidak mencukupi! Tersisa: ${currentQty} unit.`);
+              throw new Error(`Stok botol ${tx.bottleType || "Kaca"} ukuran ${bottleSize} tidak mencukupi! Tersisa: ${currentQty} unit.`);
             }
             transaction.update(bottleRef, { quantity: currentQty - bottleCountToDeduct });
           } else {
-            throw new Error(`Stok master botol ${bottleSize} tidak ditemukan!`);
+            throw new Error(`Stok master botol ${tx.bottleType || "Kaca"} ${bottleSize} tidak ditemukan!`);
           }
         }
 
@@ -672,9 +672,10 @@ export async function addTransaction(rawTx: Omit<Transaction, "id">) {
           transaction.update(bottleRef, { quantity: bottleSnap.data().quantity + bottleCountToAdd });
         } else {
           transaction.set(bottleRef, {
-            id: `bottle_${bottleSize}`,
+            id: `bottle_${bottleSize}_${tx.bottleType === "Plastik" ? "plastik" : "kaca"}`,
             type: "bottle",
             size: bottleSize,
+            bottleType: tx.bottleType || "Kaca",
             quantity: bottleCountToAdd
           });
         }
@@ -749,7 +750,7 @@ export async function deleteTransaction(id: string) {
     const bottleSize = tx.bottleSize || "None";
     const bottleCount = tx.bottleCount || 0;
     if (bottleSize !== "None" && bottleCount > 0) {
-      const bottleId = `bottle_${bottleSize}`;
+      const bottleId = `bottle_${bottleSize}_${tx.bottleType === "Plastik" ? "plastik" : "kaca"}`;
       bottleRef = doc(db, "stocks", bottleId);
       bottleSnap = await transaction.get(bottleRef);
     }
@@ -785,7 +786,7 @@ export async function deleteTransaction(id: string) {
           if (item.bottleSize && item.bottleSize !== "None" && (item.bottleCount || 0) > 0) {
             // Restore bottle
             if (!item.noBottleStockDeduct) {
-              const botId = `bottle_${item.bottleSize}`;
+              const botId = `bottle_${item.bottleSize}_${item.bottleType === "Plastik" ? "plastik" : "kaca"}`;
               const botRef = doc(db, "stocks", botId);
               const botSnap = await transaction.get(botRef);
               if (botSnap.exists()) {
@@ -1168,7 +1169,13 @@ export function subscribeToBottleSizes(callback: (sizes: BottleSize[]) => void, 
   );
 }
 
-export async function addBottleSize(size: string, price: number) {
+export async function addBottleSize(
+  size: string,
+  priceKaca: number,
+  pricePlastik: number,
+  purchasePriceKaca: number,
+  purchasePricePlastik: number
+) {
   const cleanSize = size.trim();
   const id = cleanSize.toLowerCase().replace(/\s+/g, "");
   
@@ -1176,20 +1183,39 @@ export async function addBottleSize(size: string, price: number) {
   await setDoc(doc(db, "bottle_sizes", id), {
     id,
     size: cleanSize,
-    price,
+    price: priceKaca, // legacy/fallback
+    priceKaca,
+    pricePlastik,
+    purchasePriceKaca,
+    purchasePricePlastik,
     addedAt: new Date().toISOString()
   });
 
-  // 2. Ensure stock document exists for this bottle size
-  const stockId = `bottle_${cleanSize}`;
-  const stockRef = doc(db, "stocks", stockId);
-  const stockSnap = await getDoc(stockRef);
-  if (!stockSnap.exists()) {
-    await setDoc(stockRef, {
-      id: stockId,
+  // 2. Ensure stock document exists for Glass size
+  const stockKacaId = `bottle_${cleanSize}_kaca`;
+  const stockKacaRef = doc(db, "stocks", stockKacaId);
+  const stockKacaSnap = await getDoc(stockKacaRef);
+  if (!stockKacaSnap.exists()) {
+    await setDoc(stockKacaRef, {
+      id: stockKacaId,
       type: "bottle",
       size: cleanSize,
-      quantity: 0 // starting with 0 stock until they purchase/adjust
+      bottleType: "Kaca",
+      quantity: 0
+    });
+  }
+
+  // 3. Ensure stock document exists for Plastic size
+  const stockPlastikId = `bottle_${cleanSize}_plastik`;
+  const stockPlastikRef = doc(db, "stocks", stockPlastikId);
+  const stockPlastikSnap = await getDoc(stockPlastikRef);
+  if (!stockPlastikSnap.exists()) {
+    await setDoc(stockPlastikRef, {
+      id: stockPlastikId,
+      type: "bottle",
+      size: cleanSize,
+      bottleType: "Plastik",
+      quantity: 0
     });
   }
 }
@@ -1598,7 +1624,7 @@ export async function sendBundlingPackageToReseller(
 
     // 2. Define master component stock IDs
     const essenceStockId = `essence_${pkg.scentName.replace(/\s+/g, "_").toLowerCase()}`;
-    const bottleStockId = `bottle_${pkg.bottleSize}`;
+    const bottleStockId = `bottle_${pkg.bottleSize}_kaca`;
     const alcoholStockId = pkg.solventType === "Absolut Gel" ? "alcohol_gel" : "alcohol_cair";
 
     const essenceRef = doc(db, "stocks", essenceStockId);
@@ -1702,7 +1728,7 @@ export async function returBundlingPackageFromReseller(
 
     // 2. Define master component stock IDs
     const essenceStockId = `essence_${pkg.scentName.replace(/\s+/g, "_").toLowerCase()}`;
-    const bottleStockId = `bottle_${pkg.bottleSize}`;
+    const bottleStockId = `bottle_${pkg.bottleSize}_kaca`;
     const alcoholStockId = pkg.solventType === "Absolut Gel" ? "alcohol_gel" : "alcohol_cair";
 
     const essenceRef = doc(db, "stocks", essenceStockId);

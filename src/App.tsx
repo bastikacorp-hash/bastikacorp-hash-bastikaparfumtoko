@@ -60,7 +60,11 @@ import {
   sendBundlingPackageToReseller,
   returBundlingPackageFromReseller,
   addResellerSaleTransaction,
-  settleResellerTransaction
+  settleResellerTransaction,
+  subscribeToMasterProducts,
+  addMasterProduct,
+  updateMasterProductPrice,
+  deleteMasterProduct
 } from "./dbService";
 import { 
   Shelf as ShelfType, 
@@ -77,7 +81,8 @@ import {
   SaleItem,
   ResellerStock,
   ResellerPackageStock,
-  BundlingPackage
+  BundlingPackage,
+  MasterProduct
 } from "./types";
 import { 
   ShoppingBag, 
@@ -145,6 +150,7 @@ export default function App() {
   const [salaries, setSalaries] = useState<Salary[]>([]);
   const [cashLedger, setCashLedger] = useState<CashMutation[]>([]);
   const [bottleSizes, setBottleSizes] = useState<BottleSize[]>([]);
+  const [masterProducts, setMasterProducts] = useState<MasterProduct[]>([]);
   
   // Consignment & Bundling States
   const [resellerStocks, setResellerStocks] = useState<ResellerStock[]>([]);
@@ -252,6 +258,9 @@ export default function App() {
 
   // Navigation / UI State
   const [activeTab, setActiveTab] = useState<string>("dashboard"); // 'dashboard', 'shelves', 'stocks', 'sales', 'purchases', 'accounting', 'users', 'history'
+  const [stocksSubTab, setStocksSubTab] = useState<"inventory" | "master">("inventory");
+  const [newMasterProduct, setNewMasterProduct] = useState({ name: "", type: "essence" as const, price: 0 });
+  const [editingMasterProduct, setEditingMasterProduct] = useState<MasterProduct | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [searchCaseSensitive, setSearchCaseSensitive] = useState(false);
   const [searchColumn, setSearchColumn] = useState("all");
@@ -517,6 +526,7 @@ export default function App() {
     const unsubBottleSizes = subscribeToBottleSizes(setBottleSizes);
     const unsubInvoice = subscribeToInvoiceSettings(setInvoiceSettings);
     const unsubCustomers = subscribeToCustomers(setCustomers);
+    const unsubMasterProducts = subscribeToMasterProducts(setMasterProducts);
     const unsubPromo = subscribeToPromoConfig((config) => {
       setPromoThreshold(config.threshold);
       setAdminThresholdInput(config.threshold.toString());
@@ -546,6 +556,7 @@ export default function App() {
       unsubLedger();
       unsubInvoice();
       unsubCustomers();
+      unsubMasterProducts();
       unsubPromo();
       unsubResellerStocks();
       unsubResellerPackageStocks();
@@ -751,6 +762,44 @@ export default function App() {
     }
   };
 
+  const handleCreateMasterProduct = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newMasterProduct.name) {
+      showToast("Nama produk master tidak boleh kosong!", "error");
+      return;
+    }
+    try {
+      await addMasterProduct(newMasterProduct);
+      showToast(`Produk master "${newMasterProduct.name}" berhasil ditambahkan!`);
+      setNewMasterProduct({ name: "", type: "essence", price: 0 });
+    } catch (err: any) {
+      showToast(err.message || "Gagal menambahkan produk master", "error");
+    }
+  };
+
+  const handleUpdateMasterProduct = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingMasterProduct) return;
+    try {
+      await updateMasterProductPrice(editingMasterProduct.id, editingMasterProduct.price);
+      showToast(`Harga produk master "${editingMasterProduct.name}" berhasil diupdate!`);
+      setEditingMasterProduct(null);
+    } catch (err: any) {
+      showToast(err.message || "Gagal mengupdate harga produk master", "error");
+    }
+  };
+
+  const handleDeleteMasterProductClick = async (id: string, name: string) => {
+    if (confirm(`Apakah Anda yakin ingin menghapus produk master "${name}"? Tindakan ini juga akan menghapus data harga terkait.`)) {
+      try {
+        await deleteMasterProduct(id);
+        showToast(`Produk master "${name}" berhasil dihapus.`);
+      } catch (err: any) {
+        showToast(err.message || "Gagal menghapus produk master", "error");
+      }
+    }
+  };
+
   const handleDeleteShelf = async (id: string, rackNum: string) => {
     if (confirm(`Apakah Anda yakin ingin menghapus ${rackNum}?`)) {
       try {
@@ -804,7 +853,12 @@ export default function App() {
     e.preventDefault();
     if (!editingPrice) return;
     try {
-      await updateScentPrice(editingPrice.scentName, editingPrice.pricePerMl);
+      const matchedMaster = masterProducts.find(p => p.type === "essence" && p.name === editingPrice.scentName);
+      if (matchedMaster) {
+        await updateMasterProductPrice(matchedMaster.id, editingPrice.pricePerMl);
+      } else {
+        await updateScentPrice(editingPrice.scentName, editingPrice.pricePerMl);
+      }
       showToast(`Harga aroma ${editingPrice.scentName} berhasil diupdate ke Rp ${editingPrice.pricePerMl.toLocaleString()}/ml!`);
       setEditingPrice(null);
     } catch (err: any) {
@@ -3604,27 +3658,32 @@ export default function App() {
                       </div>
 
                       <div>
-                        <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Nama Aroma / Scent</label>
-                        <input
-                          id="shelf-scent-input"
-                          type="text"
-                          placeholder="Contoh: Bacarat Rouge, Black Opium"
+                        <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Nama Aroma / Scent (Dari Master)</label>
+                        <select
+                          id="shelf-scent-select"
                           value={newShelf.scentName}
-                          onChange={(e) => setNewShelf({ ...newShelf, scentName: e.target.value })}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Harga jual per ML (Rupiah)</label>
-                        <input
-                          id="shelf-price-input"
-                          type="number"
-                          placeholder="Contoh: 3500"
-                          value={newShelf.pricePerMl || ""}
-                          onChange={(e) => setNewShelf({ ...newShelf, pricePerMl: Number(e.target.value) })}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white"
-                        />
+                          onChange={(e) => {
+                            const matchedProd = masterProducts.find(p => p.type === "essence" && p.name === e.target.value);
+                            setNewShelf({
+                              ...newShelf,
+                              scentName: e.target.value,
+                              pricePerMl: matchedProd ? matchedProd.price : 3500
+                            });
+                          }}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800 font-semibold"
+                        >
+                          <option value="">-- Pilih Aroma Master --</option>
+                          {masterProducts
+                            .filter(p => p.type === "essence")
+                            .map((p) => (
+                              <option key={p.id} value={p.name}>
+                                {p.name} (Rp {p.price.toLocaleString()}/ml)
+                              </option>
+                            ))}
+                        </select>
+                        <p className="text-[10px] text-slate-400 mt-1">
+                          * Pilih aroma dari Data Master. Harga jual akan sinkron secara otomatis.
+                        </p>
                       </div>
 
                       <button

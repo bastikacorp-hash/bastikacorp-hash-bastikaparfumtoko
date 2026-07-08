@@ -29,7 +29,8 @@ import {
   Customer,
   ResellerStock,
   ResellerPackageStock,
-  BundlingPackage
+  BundlingPackage,
+  MasterProduct
 } from "./types";
 
 // Helper for unique ID generation if Firestore auto-id isn't used
@@ -2011,6 +2012,280 @@ export async function settleResellerTransaction(txId: string, operatorEmail: str
     });
   });
 }
+
+// ==========================================
+// MASTER PRODUCTS SERVICES
+// ==========================================
+export function subscribeToMasterProducts(callback: (products: MasterProduct[]) => void) {
+  return onSnapshot(collection(db, "master_products"), async (snapshot) => {
+    let list: MasterProduct[] = [];
+    snapshot.forEach((docSnap) => {
+      list.push(docSnap.data() as MasterProduct);
+    });
+
+    if (list.length === 0) {
+      console.log("Master products empty. Attempting auto-migration/seeding...");
+      
+      // 1. Fetch existing prices (scents)
+      const pricesSnapshot = await getDocs(collection(db, "prices"));
+      const existingPrices: ScentPrice[] = [];
+      pricesSnapshot.forEach((docSnap) => {
+        existingPrices.push(docSnap.data() as ScentPrice);
+      });
+
+      // 2. Fetch existing bottle sizes
+      const bottlesSnapshot = await getDocs(collection(db, "bottle_sizes"));
+      const existingBottles: BottleSize[] = [];
+      bottlesSnapshot.forEach((docSnap) => {
+        existingBottles.push(docSnap.data() as BottleSize);
+      });
+
+      const seedList: MasterProduct[] = [];
+
+      // Add essences
+      existingPrices.forEach((p) => {
+        const id = "prod_essence_" + p.scentName.toLowerCase().replace(/\s+/g, "_");
+        seedList.push({
+          id,
+          name: p.scentName,
+          type: "essence",
+          price: p.pricePerMl,
+          addedAt: p.updatedAt || new Date().toISOString(),
+        });
+      });
+
+      // If no existing prices, add a few default scents to make it look great
+      if (seedList.filter(p => p.type === "essence").length === 0) {
+        const defaultScents = [
+          { name: "Avicenna", price: 3500 },
+          { name: "Bacarat Rouge", price: 5000 },
+          { name: "Black Opium", price: 4000 },
+          { name: "Blue de Chanel", price: 4500 },
+          { name: "Bombshell", price: 3000 },
+          { name: "Savage Sauvage", price: 4500 }
+        ];
+        defaultScents.forEach((sc) => {
+          const id = "prod_essence_" + sc.name.toLowerCase().replace(/\s+/g, "_");
+          seedList.push({
+            id,
+            name: sc.name,
+            type: "essence",
+            price: sc.price,
+            addedAt: new Date().toISOString()
+          });
+        });
+      }
+
+      // Add bottles
+      existingBottles.forEach((b) => {
+        const idKaca = "prod_bottle_kaca_" + b.size.toLowerCase().replace(/\s+/g, "");
+        seedList.push({
+          id: idKaca,
+          name: b.size,
+          type: "bottle_kaca",
+          price: b.priceKaca || b.price || 10000,
+          addedAt: b.addedAt || new Date().toISOString(),
+        });
+
+        const idPlastik = "prod_bottle_plastik_" + b.size.toLowerCase().replace(/\s+/g, "");
+        seedList.push({
+          id: idPlastik,
+          name: b.size,
+          type: "bottle_plastik",
+          price: b.pricePlastik || 0,
+          addedAt: b.addedAt || new Date().toISOString(),
+        });
+      });
+
+      // If no bottles, seed default sizes
+      if (seedList.filter(p => p.type.startsWith("bottle")).length === 0) {
+        const defaultSizes = ["30ml", "50ml", "100ml"];
+        defaultSizes.forEach((sz) => {
+          const idKaca = "prod_bottle_kaca_" + sz.toLowerCase();
+          seedList.push({
+            id: idKaca,
+            name: sz,
+            type: "bottle_kaca",
+            price: sz === "30ml" ? 10000 : sz === "50ml" ? 15000 : 25000,
+            addedAt: new Date().toISOString()
+          });
+          const idPlastik = "prod_bottle_plastik_" + sz.toLowerCase();
+          seedList.push({
+            id: idPlastik,
+            name: sz,
+            type: "bottle_plastik",
+            price: 0,
+            addedAt: new Date().toISOString()
+          });
+        });
+      }
+
+      // Add alcohol defaults
+      seedList.push({
+        id: "prod_alcohol_cair",
+        name: "Absolut Cair",
+        type: "alcohol",
+        price: 0,
+        addedAt: new Date().toISOString(),
+      });
+      seedList.push({
+        id: "prod_alcohol_gel",
+        name: "Absolut Gel",
+        type: "alcohol",
+        price: 0,
+        addedAt: new Date().toISOString(),
+      });
+
+      // Write to Firestore
+      try {
+        for (const prod of seedList) {
+          await setDoc(doc(db, "master_products", prod.id), prod);
+        }
+      } catch (err) {
+        console.error("Gagal auto-seed master_products:", err);
+      }
+      return;
+    }
+
+    // Sort by name
+    list.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    callback(list);
+  });
+}
+
+export async function addMasterProduct(product: Omit<MasterProduct, "id" | "addedAt">) {
+  const cleanName = product.name.trim();
+  // Generate ID based on type and name
+  const safeName = cleanName.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]+/g, "");
+  const id = `prod_${product.type}_${safeName}`;
+  const addedAt = new Date().toISOString();
+
+  await setDoc(doc(db, "master_products", id), {
+    ...product,
+    name: cleanName,
+    id,
+    addedAt
+  });
+
+  // Backward compatibility check:
+  if (product.type === "essence") {
+    await setDoc(doc(db, "prices", cleanName), {
+      scentName: cleanName,
+      pricePerMl: product.price,
+      updatedAt: addedAt
+    });
+    // Ensure stock document exists for Essence
+    const stockId = `essence_${cleanName.replace(/\s+/g, "_").toLowerCase()}`;
+    const stockRef = doc(db, "stocks", stockId);
+    const stockSnap = await getDoc(stockRef);
+    if (!stockSnap.exists()) {
+      await setDoc(stockRef, {
+        id: stockId,
+        type: "essence",
+        scentName: cleanName,
+        quantity: 0
+      });
+    }
+  } else if (product.type === "bottle_kaca" || product.type === "bottle_plastik") {
+    const size = cleanName;
+    const sizeId = size.toLowerCase().replace(/\s+/g, "");
+    
+    // We update/create bottle_sizes doc
+    const bRef = doc(db, "bottle_sizes", sizeId);
+    const bSnap = await getDoc(bRef);
+    const existing = bSnap.exists() ? bSnap.data() : {};
+    
+    await setDoc(bRef, {
+      id: sizeId,
+      size,
+      price: product.type === "bottle_kaca" ? product.price : (existing.price || 10000),
+      priceKaca: product.type === "bottle_kaca" ? product.price : (existing.priceKaca || 10000),
+      pricePlastik: product.type === "bottle_plastik" ? product.price : (existing.pricePlastik || 0),
+      purchasePriceKaca: existing.purchasePriceKaca || 5000,
+      purchasePricePlastik: existing.purchasePricePlastik || 3000,
+      addedAt: existing.addedAt || addedAt
+    });
+
+    // Ensure stocks document exists for both kaca and plastik
+    const stKId = `bottle_${size}_kaca`;
+    const stKRef = doc(db, "stocks", stKId);
+    if (!(await getDoc(stKRef)).exists()) {
+      await setDoc(stKRef, { id: stKId, type: "bottle", size, bottleType: "Kaca", quantity: 0 });
+    }
+    const stPId = `bottle_${size}_plastik`;
+    const stPRef = doc(db, "stocks", stPId);
+    if (!(await getDoc(stPRef)).exists()) {
+      await setDoc(stPRef, { id: stPId, type: "bottle", size, bottleType: "Plastik", quantity: 0 });
+    }
+  }
+
+  return id;
+}
+
+export async function updateMasterProductPrice(id: string, newPrice: number) {
+  const ref = doc(db, "master_products", id);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    throw new Error("Master produk tidak ditemukan!");
+  }
+  const prod = snap.data() as MasterProduct;
+  await updateDoc(ref, { price: newPrice });
+
+  // Keep backward compatibility in sync!
+  const addedAt = new Date().toISOString();
+  if (prod.type === "essence") {
+    // Sync to prices table
+    await setDoc(doc(db, "prices", prod.name), {
+      scentName: prod.name,
+      pricePerMl: newPrice,
+      updatedAt: addedAt
+    });
+
+    // Cascade update to shelves if it exists
+    const shelvesQuery = query(collection(db, "shelves"), where("scentName", "==", prod.name));
+    const shelvesSnap = await getDocs(shelvesQuery);
+    
+    // Perform serial batched updates if needed, or simple sequential updates
+    for (const shelfDoc of shelvesSnap.docs) {
+      await updateDoc(doc(db, "shelves", shelfDoc.id), { pricePerMl: newPrice });
+    }
+  } else if (prod.type === "bottle_kaca" || prod.type === "bottle_plastik") {
+    const sizeId = prod.name.toLowerCase().replace(/\s+/g, "");
+    const bRef = doc(db, "bottle_sizes", sizeId);
+    const bSnap = await getDoc(bRef);
+    if (bSnap.exists()) {
+      if (prod.type === "bottle_kaca") {
+        await updateDoc(bRef, { priceKaca: newPrice, price: newPrice });
+      } else {
+        await updateDoc(bRef, { pricePlastik: newPrice });
+      }
+    }
+  }
+}
+
+export async function deleteMasterProduct(id: string) {
+  const ref = doc(db, "master_products", id);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return;
+  const prod = snap.data() as MasterProduct;
+
+  await deleteDoc(ref);
+
+  // Sync delete for legacy tables
+  if (prod.type === "essence") {
+    await deleteDoc(doc(db, "prices", prod.name));
+  } else if (prod.type === "bottle_kaca" || prod.type === "bottle_plastik") {
+    // Only delete if BOTH are gone
+    const otherType = prod.type === "bottle_kaca" ? "bottle_plastik" : "bottle_kaca";
+    const otherId = `prod_${otherType}_${prod.name.toLowerCase().replace(/\s+/g, "")}`;
+    const otherSnap = await getDoc(doc(db, "master_products", otherId));
+    if (!otherSnap.exists()) {
+      const sizeId = prod.name.toLowerCase().replace(/\s+/g, "");
+      await deleteDoc(doc(db, "bottle_sizes", sizeId));
+    }
+  }
+}
+
 
 
 

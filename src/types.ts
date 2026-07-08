@@ -150,5 +150,13 @@ export interface BundlingPackage {
   addedAt: string;
 }
 
+export interface MasterProduct {
+  id: string;
+  name: string;
+  type: "essence" | "bottle_kaca" | "bottle_plastik" | "alcohol";
+  price: number;
+  addedAt: string;
+}
+
 
 

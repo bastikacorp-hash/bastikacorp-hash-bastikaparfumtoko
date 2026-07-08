@@ -139,6 +139,7 @@ export interface BundlingPackage {
   essenceMl: number;
   alcoholMl: number;
   price: number;
+  solventType?: "Absolut Cair" | "Absolut Gel";
   addedAt: string;
 }
 

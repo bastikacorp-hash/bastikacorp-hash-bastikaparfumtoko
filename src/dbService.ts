@@ -40,8 +40,44 @@ const generateId = () => Math.random().toString(36).substring(2, 15);
 // ==========================================
 export async function seedInitialDataIfEmpty() {
   try {
+    // 1. Separate Solvents Migration/Creation Check (runs whether config is seeded or not)
+    const oldAlcoholRef = doc(db, "stocks", "alcohol_main");
+    const oldAlcoholSnap = await getDoc(oldAlcoholRef);
+    const newAlcoholCairRef = doc(db, "stocks", "alcohol_cair");
+    const newAlcoholCairSnap = await getDoc(newAlcoholCairRef);
     const configRef = doc(db, "config", "status");
     const configSnap = await getDoc(configRef);
+
+    if (oldAlcoholSnap.exists() && !newAlcoholCairSnap.exists()) {
+      const oldQty = oldAlcoholSnap.data().quantity || 0;
+      await setDoc(newAlcoholCairRef, {
+        id: "alcohol_cair",
+        type: "alcohol",
+        scentName: "Absolut Cair",
+        quantity: oldQty
+      });
+      await setDoc(doc(db, "stocks", "alcohol_gel"), {
+        id: "alcohol_gel",
+        type: "alcohol",
+        scentName: "Absolut Gel",
+        quantity: 5000
+      });
+      await deleteDoc(oldAlcoholRef);
+    } else if (!newAlcoholCairSnap.exists() && configSnap.exists()) {
+      await setDoc(newAlcoholCairRef, {
+        id: "alcohol_cair",
+        type: "alcohol",
+        scentName: "Absolut Cair",
+        quantity: 5000
+      });
+      await setDoc(doc(db, "stocks", "alcohol_gel"), {
+        id: "alcohol_gel",
+        type: "alcohol",
+        scentName: "Absolut Gel",
+        quantity: 5000
+      });
+    }
+
     if (configSnap.exists()) {
       return; // Already seeded
     }
@@ -96,9 +132,16 @@ export async function seedInitialDataIfEmpty() {
       });
     }
     // Alcohol stock
-    await setDoc(doc(db, "stocks", "alcohol_main"), {
-      id: "alcohol_main",
+    await setDoc(doc(db, "stocks", "alcohol_cair"), {
+      id: "alcohol_cair",
       type: "alcohol",
+      scentName: "Absolut Cair",
+      quantity: 5000, // 5000ml alcohol
+    });
+    await setDoc(doc(db, "stocks", "alcohol_gel"), {
+      id: "alcohol_gel",
+      type: "alcohol",
+      scentName: "Absolut Gel",
       quantity: 5000, // 5000ml alcohol
     });
     // Bottle stocks
@@ -306,9 +349,12 @@ export async function addTransaction(rawTx: Omit<Transaction, "id">) {
       priceSnap = await transaction.get(priceRef);
     }
 
-    // D. Alcohol Stock Ref & Read
-    const alcoholRef = doc(db, "stocks", "alcohol_main");
-    const alcoholSnap = await transaction.get(alcoholRef);
+    // D. Alcohol Stock Refs & Reads
+    const alcoholCairRef = doc(db, "stocks", "alcohol_cair");
+    const alcoholCairSnap = await transaction.get(alcoholCairRef);
+
+    const alcoholGelRef = doc(db, "stocks", "alcohol_gel");
+    const alcoholGelSnap = await transaction.get(alcoholGelRef);
 
     // E. Bottle Stock Ref & Read
     let bottleRef = null;
@@ -444,9 +490,9 @@ export async function addTransaction(rawTx: Omit<Transaction, "id">) {
         }
 
         // D. Final Alcohol Deduction
-        if (totalAlcoholDeduct > 0 && alcoholSnap.exists()) {
-          const alcoholQty = alcoholSnap.data().quantity || 0;
-          transaction.update(alcoholRef, { quantity: Math.max(0, alcoholQty - totalAlcoholDeduct) });
+        if (totalAlcoholDeduct > 0 && alcoholCairSnap.exists()) {
+          const alcoholQty = alcoholCairSnap.data().quantity || 0;
+          transaction.update(alcoholCairRef, { quantity: Math.max(0, alcoholQty - totalAlcoholDeduct) });
         }
 
         // Construct mutation description
@@ -486,9 +532,9 @@ export async function addTransaction(rawTx: Omit<Transaction, "id">) {
             }
           }
 
-          if (alcoholDeduct > 0 && alcoholSnap.exists()) {
-            const alcoholQty = alcoholSnap.data().quantity || 0;
-            transaction.update(alcoholRef, { quantity: Math.max(0, alcoholQty - alcoholDeduct) });
+          if (alcoholDeduct > 0 && alcoholCairSnap.exists()) {
+            const alcoholQty = alcoholCairSnap.data().quantity || 0;
+            transaction.update(alcoholCairRef, { quantity: Math.max(0, alcoholQty - alcoholDeduct) });
           }
         }
 
@@ -602,12 +648,19 @@ export async function addTransaction(rawTx: Omit<Transaction, "id">) {
 
       // Update alcohol stock
       if (tx.category === "alkohol" && volumeToAdd > 0) {
-        if (alcoholSnap.exists()) {
-          transaction.update(alcoholRef, { quantity: alcoholSnap.data().quantity + volumeToAdd });
+        const isGel = tx.scentName === "Absolut Gel";
+        const targetRef = isGel ? alcoholGelRef : alcoholCairRef;
+        const targetSnap = isGel ? alcoholGelSnap : alcoholCairSnap;
+        const targetId = isGel ? "alcohol_gel" : "alcohol_cair";
+        const targetName = isGel ? "Absolut Gel" : "Absolut Cair";
+
+        if (targetSnap && targetSnap.exists()) {
+          transaction.update(targetRef, { quantity: targetSnap.data().quantity + volumeToAdd });
         } else {
-          transaction.set(alcoholRef, {
-            id: "alcohol_main",
+          transaction.set(targetRef, {
+            id: targetId,
             type: "alcohol",
+            scentName: targetName,
             quantity: volumeToAdd
           });
         }
@@ -685,8 +738,11 @@ export async function deleteTransaction(id: string) {
       essenceSnap = await transaction.get(essenceRef);
     }
 
-    const alcoholRef = doc(db, "stocks", "alcohol_main");
-    const alcoholSnap = await transaction.get(alcoholRef);
+    const alcoholCairRef = doc(db, "stocks", "alcohol_cair");
+    const alcoholCairSnap = await transaction.get(alcoholCairRef);
+
+    const alcoholGelRef = doc(db, "stocks", "alcohol_gel");
+    const alcoholGelSnap = await transaction.get(alcoholGelRef);
 
     let bottleRef = null;
     let bottleSnap = null;
@@ -714,26 +770,76 @@ export async function deleteTransaction(id: string) {
 
     if (tx.type === "sale") {
       // Revert SALE (penjualan)
-      // Add back essence stock
-      if (tx.scentName && (tx.volumeMl || 0) > 0 && essenceRef && essenceSnap) {
-        if (essenceSnap.exists()) {
-          const currentQty = essenceSnap.data().quantity;
-          transaction.update(essenceRef, { quantity: currentQty + (tx.volumeMl || 0) });
+      if (tx.items && tx.items.length > 0) {
+        // Multi-item revert
+        let totalAlcoholRestore = 0;
+        for (const item of tx.items) {
+          if (item.scentName && (item.volumeMl || 0) > 0) {
+            const essenceId = `essence_${item.scentName.replace(/\s+/g, "_").toLowerCase()}`;
+            const essRef = doc(db, "stocks", essenceId);
+            const essSnap = await transaction.get(essRef);
+            if (essSnap.exists()) {
+              transaction.update(essRef, { quantity: essSnap.data().quantity + (item.volumeMl || 0) });
+            }
+          }
+          if (item.bottleSize && item.bottleSize !== "None" && (item.bottleCount || 0) > 0) {
+            // Restore bottle
+            if (!item.noBottleStockDeduct) {
+              const botId = `bottle_${item.bottleSize}`;
+              const botRef = doc(db, "stocks", botId);
+              const botSnap = await transaction.get(botRef);
+              if (botSnap.exists()) {
+                transaction.update(botRef, { quantity: botSnap.data().quantity + item.bottleCount });
+              }
+            }
+            // Calculate alcohol to restore
+            const bottleCapacity = parseInt(item.bottleSize);
+            if (!isNaN(bottleCapacity)) {
+              const diff = bottleCapacity - (item.volumeMl || 0);
+              if (diff > 0) {
+                totalAlcoholRestore += diff * (item.bottleCount || 0);
+              }
+            }
+          }
         }
-      }
+        if (totalAlcoholRestore > 0 && alcoholCairSnap.exists()) {
+          transaction.update(alcoholCairRef, { quantity: alcoholCairSnap.data().quantity + totalAlcoholRestore });
+        }
+      } else {
+        // Single-item fallback revert
+        // Add back essence stock
+        if (tx.scentName && (tx.volumeMl || 0) > 0 && essenceRef && essenceSnap) {
+          if (essenceSnap.exists()) {
+            const currentQty = essenceSnap.data().quantity;
+            transaction.update(essenceRef, { quantity: currentQty + (tx.volumeMl || 0) });
+          }
+        }
 
-      // Add back alcohol stock
-      if (alcoholSnap.exists() && tx.volumeMl && tx.volumeMl > 0) {
-        const alcoholQty = alcoholSnap.data().quantity;
-        const alcoholDeduct = Math.round(tx.volumeMl * 0.5);
-        transaction.update(alcoholRef, { quantity: alcoholQty + alcoholDeduct });
-      }
+        // Add back alcohol stock
+        if (alcoholCairSnap.exists() && tx.volumeMl && tx.volumeMl > 0) {
+          const alcoholQty = alcoholCairSnap.data().quantity;
+          let alcoholDeduct = 0;
+          if (bottleSize !== "None") {
+            const bottleCapacity = parseInt(bottleSize);
+            if (!isNaN(bottleCapacity)) {
+              const diff = bottleCapacity - (tx.volumeMl || 0);
+              if (diff > 0) {
+                alcoholDeduct = diff * (tx.bottleCount || 1);
+              }
+            }
+          }
+          if (alcoholDeduct === 0) {
+            alcoholDeduct = Math.round(tx.volumeMl * 0.5);
+          }
+          transaction.update(alcoholCairRef, { quantity: alcoholQty + alcoholDeduct });
+        }
 
-      // Add back bottle stock
-      if (bottleSize !== "None" && bottleCount > 0 && bottleRef && bottleSnap) {
-        if (bottleSnap.exists()) {
-          const currentQty = bottleSnap.data().quantity;
-          transaction.update(bottleRef, { quantity: currentQty + bottleCount });
+        // Add back bottle stock
+        if (bottleSize !== "None" && bottleCount > 0 && bottleRef && bottleSnap) {
+          if (bottleSnap.exists()) {
+            const currentQty = bottleSnap.data().quantity;
+            transaction.update(bottleRef, { quantity: currentQty + bottleCount });
+          }
         }
       }
 
@@ -781,10 +887,15 @@ export async function deleteTransaction(id: string) {
       }
 
       // Deduct alcohol stock
-      if (tx.category === "alkohol" && (tx.volumeMl || 0) > 0 && alcoholSnap.exists()) {
-        const alcoholQty = alcoholSnap.data().quantity;
-        const targetQty = Math.max(0, alcoholQty - (tx.volumeMl || 0));
-        transaction.update(alcoholRef, { quantity: targetQty });
+      if (tx.category === "alkohol" && (tx.volumeMl || 0) > 0) {
+        const isGel = tx.scentName === "Absolut Gel";
+        const targetSnap = isGel ? alcoholGelSnap : alcoholCairSnap;
+        const targetRef = isGel ? alcoholGelRef : alcoholCairRef;
+        if (targetSnap && targetSnap.exists()) {
+          const alcoholQty = targetSnap.data().quantity;
+          const targetQty = Math.max(0, alcoholQty - (tx.volumeMl || 0));
+          transaction.update(targetRef, { quantity: targetQty });
+        }
       }
 
       // Deduct bottle stock
@@ -1488,7 +1599,7 @@ export async function sendBundlingPackageToReseller(
     // 2. Define master component stock IDs
     const essenceStockId = `essence_${pkg.scentName.replace(/\s+/g, "_").toLowerCase()}`;
     const bottleStockId = `bottle_${pkg.bottleSize}`;
-    const alcoholStockId = "alcohol_main";
+    const alcoholStockId = pkg.solventType === "Absolut Gel" ? "alcohol_gel" : "alcohol_cair";
 
     const essenceRef = doc(db, "stocks", essenceStockId);
     const bottleRef = doc(db, "stocks", bottleStockId);
@@ -1519,7 +1630,8 @@ export async function sendBundlingPackageToReseller(
 
     if (!alcoholSnap.exists() || (alcoholSnap.data().quantity || 0) < totalAlcoholRequired) {
       const currentAlcohol = alcoholSnap.exists() ? alcoholSnap.data().quantity : 0;
-      throw new Error(`Stok utama cairan pelarut (Absolut) tidak mencukupi! Tersedia: ${currentAlcohol} ml, Butuh: ${totalAlcoholRequired} ml`);
+      const solventName = pkg.solventType || "Absolut Cair";
+      throw new Error(`Stok utama cairan pelarut (${solventName}) tidak mencukupi! Tersedia: ${currentAlcohol} ml, Butuh: ${totalAlcoholRequired} ml`);
     }
 
     // === ALL READS COMPLETED. NOW DO ALL WRITES ===
@@ -1591,7 +1703,7 @@ export async function returBundlingPackageFromReseller(
     // 2. Define master component stock IDs
     const essenceStockId = `essence_${pkg.scentName.replace(/\s+/g, "_").toLowerCase()}`;
     const bottleStockId = `bottle_${pkg.bottleSize}`;
-    const alcoholStockId = "alcohol_main";
+    const alcoholStockId = pkg.solventType === "Absolut Gel" ? "alcohol_gel" : "alcohol_cair";
 
     const essenceRef = doc(db, "stocks", essenceStockId);
     const bottleRef = doc(db, "stocks", bottleStockId);
@@ -1705,7 +1817,7 @@ export async function transferStockToReseller(
     if (type === "essence") {
       masterStockId = `essence_${scentName?.replace(/\s+/g, "_").toLowerCase()}`;
     } else if (type === "alcohol") {
-      masterStockId = "alcohol_main";
+      masterStockId = scentName === "Absolut Gel" ? "alcohol_gel" : "alcohol_cair";
     } else if (type === "bottle") {
       masterStockId = `bottle_${size}`;
     }
@@ -1724,7 +1836,7 @@ export async function transferStockToReseller(
 
     // 2. Get Reseller Stock Ref & Read
     const safeEmail = resellerEmail.trim().toLowerCase().replace(/[^a-z0-9@.]+/g, "_");
-    const resellerStockId = `${safeEmail}_${type}_${type === "essence" ? scentName?.replace(/\s+/g, "_").toLowerCase() : type === "bottle" ? size : "main"}`;
+    const resellerStockId = `${safeEmail}_${type}_${type === "essence" ? scentName?.replace(/\s+/g, "_").toLowerCase() : type === "bottle" ? size : (scentName === "Absolut Gel" ? "alcohol_gel" : "alcohol_cair")}`;
     const resellerStockRef = doc(db, "reseller_stocks", resellerStockId);
     const resellerStockSnap = await transaction.get(resellerStockRef);
 
@@ -1750,7 +1862,7 @@ export async function transferStockToReseller(
 
     // C. Write Transfer Transaction (Logs)
     const txRef = doc(db, "transactions", txId);
-    const description = `Transfer stok titipan ke ${resellerEmail}: ${type === "essence" ? `Bibit ${scentName}` : type === "bottle" ? `Botol ${size}` : "Absolut"} sebanyak ${quantity}`;
+    const description = `Transfer stok titipan ke ${resellerEmail}: ${type === "essence" ? `Bibit ${scentName}` : type === "bottle" ? `Botol ${size}` : (scentName || "Absolut")} sebanyak ${quantity}`;
     
     transaction.set(txRef, {
       id: txId,

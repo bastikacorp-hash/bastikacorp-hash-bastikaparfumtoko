@@ -163,7 +163,8 @@ export default function App() {
       bottleSize: "30ml",
       essenceMl: 10,
       alcoholMl: 20,
-      price: 35000
+      price: 35000,
+      solventType: "Absolut Cair" as "Absolut Cair" | "Absolut Gel"
     };
   });
 
@@ -174,6 +175,7 @@ export default function App() {
     essenceMl: 10,
     alcoholMl: 20,
     price: 35000,
+    solventType: "Absolut Cair" as "Absolut Cair" | "Absolut Gel",
     customSuffix: ""
   });
 
@@ -184,7 +186,8 @@ export default function App() {
       bottleSize: lastFormula.bottleSize,
       essenceMl: lastFormula.essenceMl,
       alcoholMl: lastFormula.alcoholMl,
-      price: lastFormula.price
+      price: lastFormula.price,
+      solventType: lastFormula.solventType || "Absolut Cair"
     }));
   }, [lastFormula]);
   const [showTransferStock, setShowTransferStock] = useState(false);
@@ -976,12 +979,12 @@ export default function App() {
         type: "purchase",
         category: purchaseCategory,
         date: new Date().toISOString(),
-        scentName: purchaseCategory === "bibit" ? finalScent : undefined,
+        scentName: purchaseCategory === "bibit" ? finalScent : (purchaseCategory === "alkohol" ? (purchaseScent || "Absolut Cair") : undefined),
         volumeMl: (purchaseCategory === "bibit" || purchaseCategory === "alkohol") ? purchaseVolume : undefined,
         bottleSize: purchaseCategory === "botol" ? purchaseBottleSize : "None",
         bottleCount: purchaseCategory === "botol" ? purchaseCount : undefined,
         totalPrice: calculatedTotal,
-        description: purchaseDesc || `Pembelian stok ${purchaseCategory} ${purchaseCategory === 'bibit' ? finalScent : purchaseCategory === 'botol' ? purchaseBottleSize : ''}`,
+        description: purchaseDesc || `Pembelian stok ${purchaseCategory === 'bibit' ? `bibit ${finalScent}` : purchaseCategory === 'botol' ? `botol ${purchaseBottleSize}` : purchaseCategory === 'alkohol' ? (purchaseScent || 'Absolut Cair') : 'lainnya'}`,
         operatorEmail: opEmail
       });
 
@@ -1853,7 +1856,7 @@ export default function App() {
 
   const handleAddBundlingSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const { scentName, bottleSize, essenceMl, price, customSuffix } = newBundling;
+    const { scentName, bottleSize, essenceMl, price, solventType, customSuffix } = newBundling;
     if (!scentName.trim()) {
       showToast("Nama aroma wajib diisi!", "error");
       return;
@@ -1884,7 +1887,8 @@ export default function App() {
           bottleSize,
           essenceMl,
           alcoholMl: calculatedAlcoholMl,
-          price
+          price,
+          solventType
         });
         showToast(`Formula paket bundling "${autoPackageName}" berhasil diubah!`, "success");
         setEditingBundling(null);
@@ -1895,7 +1899,8 @@ export default function App() {
           bottleSize,
           essenceMl,
           alcoholMl: calculatedAlcoholMl,
-          price
+          price,
+          solventType
         });
         showToast(`Formula paket bundling "${autoPackageName}" berhasil ditambahkan!`, "success");
       }
@@ -1903,7 +1908,8 @@ export default function App() {
         bottleSize,
         essenceMl,
         alcoholMl: calculatedAlcoholMl,
-        price
+        price,
+        solventType
       };
       setLastFormula(updatedFormula);
       try {
@@ -1917,6 +1923,7 @@ export default function App() {
         essenceMl,
         alcoholMl: calculatedAlcoholMl,
         price,
+        solventType,
         customSuffix: ""
       });
       setShowAddBundling(false);
@@ -1940,6 +1947,7 @@ export default function App() {
       essenceMl: pkg.essenceMl,
       alcoholMl: pkg.alcoholMl,
       price: pkg.price,
+      solventType: pkg.solventType || "Absolut Cair",
       customSuffix: suffix
     });
     setShowAddBundling(true);
@@ -1954,6 +1962,7 @@ export default function App() {
       essenceMl: lastFormula.essenceMl,
       alcoholMl: lastFormula.alcoholMl,
       price: lastFormula.price,
+      solventType: lastFormula.solventType || "Absolut Cair",
       customSuffix: ""
     });
     setShowAddBundling(false);
@@ -2451,7 +2460,7 @@ export default function App() {
 
                   const availBottle = stocks.find(s => s.type === "bottle" && s.size === selectedPkg.bottleSize)?.quantity || 0;
                   const availEssence = stocks.find(s => s.type === "essence" && s.scentName === selectedPkg.scentName)?.quantity || 0;
-                  const availAlcohol = stocks.find(s => s.type === "alcohol")?.quantity || 0;
+                  const availAlcohol = stocks.find(s => s.id === (selectedPkg.solventType === "Absolut Gel" ? "alcohol_gel" : "alcohol_cair"))?.quantity || 0;
 
                   const hasEnoughBottle = availBottle >= reqBottle;
                   const hasEnoughEssence = availEssence >= reqEssence;
@@ -2474,7 +2483,7 @@ export default function App() {
                         </span>
                       </div>
                       <div className="flex justify-between">
-                        <span>Cairan Absolut:</span>
+                        <span>Cairan {selectedPkg.solventType || "Absolut Cair"}:</span>
                         <span className={hasEnoughAlcohol ? "text-emerald-600" : "text-rose-600 font-bold"}>
                           {reqAlcohol} ml (Stok: {availAlcohol} ml)
                         </span>
@@ -2539,7 +2548,7 @@ export default function App() {
                           </div>
                           <div className="flex justify-between">
                             <span>Kebutuhan Absolut:</span>
-                            <span className="font-bold">{pkg.alcoholMl} ml</span>
+                            <span className="font-bold">{pkg.alcoholMl} ml ({pkg.solventType || "Absolut Cair"})</span>
                           </div>
                         </div>
                       </div>
@@ -2623,6 +2632,19 @@ export default function App() {
                       })()} ml
                     </div>
                   </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Jenis Pelarut (Solvent)</label>
+                  <select
+                    value={newBundling.solventType || "Absolut Cair"}
+                    onChange={(e) => setNewBundling(prev => ({ ...prev, solventType: e.target.value as "Absolut Cair" | "Absolut Gel" }))}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800 cursor-pointer font-semibold mb-3"
+                    required
+                  >
+                    <option value="Absolut Cair">Absolut Cair</option>
+                    <option value="Absolut Gel">Absolut Gel</option>
+                  </select>
                 </div>
 
                 <div>
@@ -3773,16 +3795,26 @@ export default function App() {
                 </div>
 
                 {/* Alkohol card total */}
-                <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm flex items-center justify-between">
-                  <div>
+                <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm flex flex-col justify-between">
+                  <div className="flex items-center justify-between">
                     <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Stok Utama Absolut</span>
-                    <h4 className="text-2xl font-extrabold text-slate-900 font-mono mt-1">
-                      {(stocks.find(s => s.id === "alcohol_main")?.quantity || 0).toLocaleString("id-ID")} ml
-                    </h4>
-                    <p className="text-[10px] text-slate-500 mt-2">Disediakan free bundling untuk campuran racikan.</p>
+                    <div className="h-8 w-8 bg-teal-50 rounded-lg flex items-center justify-center text-teal-600">
+                      <TrendingUp className="h-4 w-4" />
+                    </div>
                   </div>
-                  <div className="h-12 w-12 bg-teal-50 rounded-xl flex items-center justify-center text-teal-600">
-                    <TrendingUp className="h-6 w-6" />
+                  <div className="grid grid-cols-2 gap-2 mt-2">
+                    <div>
+                      <span className="text-[10px] text-slate-500 font-medium">Absolut Cair</span>
+                      <h4 className="text-lg font-extrabold text-slate-900 font-mono">
+                        {(stocks.find(s => s.id === "alcohol_cair")?.quantity || 0).toLocaleString("id-ID")} ml
+                      </h4>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-500 font-medium">Absolut Gel</span>
+                      <h4 className="text-lg font-extrabold text-slate-900 font-mono">
+                        {(stocks.find(s => s.id === "alcohol_gel")?.quantity || 0).toLocaleString("id-ID")} ml
+                      </h4>
+                    </div>
                   </div>
                 </div>
 
@@ -3876,7 +3908,7 @@ export default function App() {
                           {stocks.filter(s => s.type === "bottle" || s.type === "alcohol").map((s) => (
                             <tr key={s.id} className="hover:bg-slate-50/50 transition-colors">
                               <td className="py-3 px-4 font-bold text-slate-800">
-                                {s.type === "alcohol" ? "Cairan Absolut (Utama)" : `Botol Parfum Ukuran ${s.size}`}
+                                {s.type === "alcohol" ? (s.scentName || (s.id === "alcohol_gel" ? "Absolut Gel" : "Absolut Cair")) : `Botol Parfum Ukuran ${s.size}`}
                               </td>
                               <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">
                                 <span className={`px-2 py-1 rounded-md ${
@@ -4827,6 +4859,21 @@ export default function App() {
                             )}
                           </div>
                         </div>
+                      </div>
+                    )}
+
+                    {purchaseCategory === "alkohol" && (
+                      <div className="space-y-2">
+                        <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Jenis Cairan Absolut</label>
+                        <select
+                          value={purchaseScent || "Absolut Cair"}
+                          onChange={(e) => setPurchaseScent(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-800 font-semibold cursor-pointer"
+                          required
+                        >
+                          <option value="Absolut Cair">Absolut Cair</option>
+                          <option value="Absolut Gel">Absolut Gel</option>
+                        </select>
                       </div>
                     )}
 

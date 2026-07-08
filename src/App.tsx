@@ -5554,7 +5554,7 @@ export default function App() {
                       </label>
                       <input
                         id="client-email-input"
-                        type={newClientRole === "client" ? "text" : "email"}
+                        type={(newClientRole === "client" || newClientRole === "reseller") ? "text" : "email"}
                         placeholder={newClientRole === "client" ? "Contoh: budi, tika, kasir1 (tanpa spasi/@)" : newClientRole === "reseller" ? "Contoh: reseller1 atau budireseller@gmail.com" : "Contoh: adminbaru@gmail.com"}
                         value={newClientEmail}
                         onChange={(e) => setNewClientEmail(e.target.value)}
